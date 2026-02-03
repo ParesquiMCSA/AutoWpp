@@ -83,22 +83,28 @@ def save_contacts(contacts):
             print(f"❌ Error saving {CONTACTS_FILE}: {e}")
             return False
 
-def mark_contact_as_sent(phone, account_id):
-    """Mark a contact as sent in the JSON file"""
+def mark_contact_as_sent(phone, account_id, success=True):
+    """Mark a contact as sent (or failed) in the JSON file"""
     contacts = load_contacts()
     updated = False
     
     for contact in contacts:
         if contact['phone'] == phone:
-            contact['sent'] = True
-            contact['sentBy'] = account_id
-            contact['sentAt'] = datetime.now().isoformat()
+            if success:
+                contact['sent'] = True
+                contact['sentBy'] = account_id
+                contact['sentAt'] = datetime.now().isoformat()
+                print(f"💾 Marked {phone} as sent by {account_id}")
+            else:
+                contact['sent'] = True  # Mark as "processed" to avoid retries
+                contact['sentBy'] = account_id
+                contact['sentAt'] = f"ERROR_{datetime.now().isoformat()}"
+                print(f"⚠️  Marked {phone} as failed by {account_id}")
             updated = True
             break
     
     if updated:
         save_contacts(contacts)
-        print(f"💾 Marked {phone} as sent by {account_id}")
     
     return updated
 
@@ -172,19 +178,22 @@ def send_message_via_account(account, contact):
             
             if process.returncode == 0:
                 print(f"✅ [{account['name']}] Message sent to {phone}")
-                mark_contact_as_sent(phone, account['id'])
+                mark_contact_as_sent(phone, account['id'], success=True)
                 return True
             else:
                 print(f"❌ [{account['name']}] Failed to send to {phone}")
+                mark_contact_as_sent(phone, account['id'], success=False)
                 return False
                 
         except subprocess.TimeoutExpired:
             print(f"⚠️  [{account['name']}] Timeout sending to {phone}")
             process.kill()
+            mark_contact_as_sent(phone, account['id'], success=False)
             return False
             
     except Exception as e:
         print(f"❌ [{account['name']}] Error sending to {phone}: {e}")
+        mark_contact_as_sent(phone, account['id'], success=False)
         return False
     finally:
         # Clean up temp file
@@ -441,23 +450,34 @@ def main():
                     total = len(contacts)
                     sent = len([c for c in contacts if c.get('sent', False)])
                     unsent = total - sent
+                    errors = len([c for c in contacts if c.get('sent') and c.get('sentAt', '').startswith('ERROR_')])
                     
                     print("\n📊 Sending Statistics:")
                     print("─" * 60)
                     print(f"  Total contacts: {total}")
-                    print(f"  Sent: {sent}")
+                    print(f"  Sent successfully: {sent - errors}")
+                    print(f"  Failed (errors): {errors}")
                     print(f"  Unsent: {unsent}")
                     print(f"  Authenticated accounts: {len(authenticated_accounts)}")
                     
                     # Show breakdown by account
                     by_account = {}
+                    error_by_account = {}
                     for c in contacts:
                         if c.get('sent') and c.get('sentBy'):
-                            by_account[c['sentBy']] = by_account.get(c['sentBy'], 0) + 1
+                            if c.get('sentAt', '').startswith('ERROR_'):
+                                error_by_account[c['sentBy']] = error_by_account.get(c['sentBy'], 0) + 1
+                            else:
+                                by_account[c['sentBy']] = by_account.get(c['sentBy'], 0) + 1
                     
                     if by_account:
-                        print("\n  Sent by account:")
+                        print("\n  Successfully sent by account:")
                         for acc_id, count in by_account.items():
+                            print(f"    - {acc_id}: {count}")
+                    
+                    if error_by_account:
+                        print("\n  Errors by account:")
+                        for acc_id, count in error_by_account.items():
                             print(f"    - {acc_id}: {count}")
                     print("─" * 60)
                     print()
