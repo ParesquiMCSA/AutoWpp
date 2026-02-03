@@ -76,6 +76,12 @@ async function getSheetsClient() {
         sheetsClientPromise = (async () => {
             const credentials = JSON.parse(fs.readFileSync(CREDENTIALS_PATH, 'utf8'));
             const token = JSON.parse(fs.readFileSync(TOKEN_PATH, 'utf8'));
+            const requiredScopes = ['https://www.googleapis.com/auth/spreadsheets'];
+
+            if (!token.scope || !token.scope.includes(requiredScopes[0])) {
+                console.warn(`[${accountId}] ⚠️  Google token missing Sheets scope. Re-authenticate with: ${requiredScopes.join(' ')}`);
+            }
+
             const { client_id, client_secret, redirect_uris } = credentials.installed || credentials.web;
             const auth = new google.auth.OAuth2(client_id, client_secret, redirect_uris[0]);
             auth.setCredentials(token);
