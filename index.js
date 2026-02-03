@@ -59,6 +59,10 @@ function markContactAsSent(phoneNumber) {
     }
 }
 
+function randomBetween(min, max) {
+    return Math.random() * (max - min) + min;
+}
+
 try {
     const contactsData = fs.readFileSync(contactsPath, 'utf8');
     contacts = JSON.parse(contactsData);
@@ -118,12 +122,17 @@ async function sendMessagesToContacts() {
             
             // Wait for the contact's specified delay before sending next message
             if (i < unsentContacts.length - 1 && delay) {
-                console.log(`[${accountId}] ⏳ Waiting ${delay}ms before next message...\n`);
-                await new Promise(resolve => setTimeout(resolve, delay));
+                const jitter = Math.floor(randomBetween(1000, 5000));
+                const totalDelay = delay + jitter;
+                console.log(`[${accountId}] ⏳ Waiting ${totalDelay}ms before next message...\n`);
+                await new Promise(resolve => setTimeout(resolve, totalDelay));
             } else if (i < unsentContacts.length - 1) {
                 // Default delay if not specified
-                console.log(`[${accountId}] ⏳ Waiting 2000ms (default) before next message...\n`);
-                await new Promise(resolve => setTimeout(resolve, 2000));
+                const baseDelay = 2000;
+                const jitter = Math.floor(randomBetween(1000, 5000));
+                const totalDelay = baseDelay + jitter;
+                console.log(`[${accountId}] ⏳ Waiting ${totalDelay}ms (default + random) before next message...\n`);
+                await new Promise(resolve => setTimeout(resolve, totalDelay));
             }
             
         } catch (error) {
@@ -190,6 +199,8 @@ client.on('message_create', async (message) => {
     if (!message.fromMe && message.body) {
         try {
             console.log(`[${accountId}] 📨 Received message from ${message.from}: "${message.body}"`);
+            const replyDelayMs = randomBetween(1000, 3000);
+            await new Promise(resolve => setTimeout(resolve, replyDelayMs));
             const state = getLeadState(message.from);
             const text = message.body.trim();
 
