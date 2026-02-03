@@ -82,7 +82,7 @@ Após enviar mensagens, o bot permanece ativo e responde automaticamente com **"
 
 ## Relato de erros
 
-Em falhas de envio, o sistema tenta registrar erros em um endpoint configurado no código (`ERROR_REPORT_URL`). Certifique-se de ajustar a URL e o token conforme necessário.
+Em falhas de envio, o sistema tenta registrar erros em um endpoint configurado no código (`ERROR_REPORT_URL`). Certifique-se de ajustar a URL e o token conforme necessário. Quando ocorre um erro de envio pelo orquestrador, o contato permanece com `sent: false` e recebe um `sentAt` com prefixo `ERROR_`, para que o reenvio aconteça apenas em uma próxima execução.
 
 ## Dicas
 

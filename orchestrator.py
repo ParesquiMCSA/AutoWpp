@@ -83,8 +83,8 @@ def save_contacts(contacts):
             print(f"❌ Error saving {CONTACTS_FILE}: {e}")
             return False
 
-def mark_contact_as_sent(phone, account_id, success=True):
-    """Mark a contact as sent (or failed) in the JSON file"""
+def mark_contact_status(phone, account_id, success=True):
+    """Mark a contact as sent or record an error without retrying in the same run."""
     contacts = load_contacts()
     updated = False
     
@@ -96,7 +96,7 @@ def mark_contact_as_sent(phone, account_id, success=True):
                 contact['sentAt'] = datetime.now().isoformat()
                 print(f"💾 Marked {phone} as sent by {account_id}")
             else:
-                contact['sent'] = True  # Mark as "processed" to avoid retries
+                contact['sent'] = False  # Keep unsent to allow retry on next run
                 contact['sentBy'] = account_id
                 contact['sentAt'] = f"ERROR_{datetime.now().isoformat()}"
                 print(f"⚠️  Marked {phone} as failed by {account_id}")
@@ -178,22 +178,22 @@ def send_message_via_account(account, contact):
             
             if process.returncode == 0:
                 print(f"✅ [{account['name']}] Message sent to {phone}")
-                mark_contact_as_sent(phone, account['id'], success=True)
+                mark_contact_status(phone, account['id'], success=True)
                 return True
             else:
                 print(f"❌ [{account['name']}] Failed to send to {phone}")
-                mark_contact_as_sent(phone, account['id'], success=False)
+                mark_contact_status(phone, account['id'], success=False)
                 return False
                 
         except subprocess.TimeoutExpired:
             print(f"⚠️  [{account['name']}] Timeout sending to {phone}")
             process.kill()
-            mark_contact_as_sent(phone, account['id'], success=False)
+            mark_contact_status(phone, account['id'], success=False)
             return False
             
     except Exception as e:
         print(f"❌ [{account['name']}] Error sending to {phone}: {e}")
-        mark_contact_as_sent(phone, account['id'], success=False)
+        mark_contact_status(phone, account['id'], success=False)
         return False
     finally:
         # Clean up temp file
@@ -278,15 +278,25 @@ def coordinator_loop():
     print(f"\n✅ {len(authenticated_accounts)} account(s) authenticated and ready!")
     print(f"📋 Authenticated: {', '.join(authenticated_accounts)}\n")
     
+    failed_this_run = set()
+
     # Load contacts and start sending
     while True:
         contacts = load_contacts()
-        unsent = [c for c in contacts if not c.get('sent', False)]
+        unsent = [
+            c for c in contacts
+            if not c.get('sent', False) and c.get('phone') not in failed_this_run
+        ]
         
         if not unsent:
-            print("\n✅ All contacts have been messaged!")
-            print("ℹ️  Coordinator will keep bots running for auto-replies")
-            print("ℹ️  Add more contacts or reset 'sent' flags to send more messages\n")
+            pending = [c for c in contacts if not c.get('sent', False)]
+            if pending:
+                print("\n⚠️  Some contacts failed in this run and will be retried next start.")
+                print("ℹ️  Restart the orchestrator to retry failed contacts.")
+            else:
+                print("\n✅ All contacts have been messaged!")
+                print("ℹ️  Coordinator will keep bots running for auto-replies")
+                print("ℹ️  Add more contacts or reset 'sent' flags to send more messages\n")
             break
         
         # Get next available authenticated account
@@ -311,6 +321,7 @@ def coordinator_loop():
                 time.sleep(delay)
         else:
             # On failure, wait a bit before retrying
+            failed_this_run.add(contact.get('phone'))
             time.sleep(2)
     
     print("\n" + "=" * 60)
@@ -450,12 +461,17 @@ def main():
                     total = len(contacts)
                     sent = len([c for c in contacts if c.get('sent', False)])
                     unsent = total - sent
-                    errors = len([c for c in contacts if c.get('sent') and c.get('sentAt', '').startswith('ERROR_')])
+                    errors = len([c for c in contacts if c.get('sentAt', '').startswith('ERROR_')])
+                    sent_success = len([
+                        c for c in contacts
+                        if c.get('sent', False)
+                        and not c.get('sentAt', '').startswith('ERROR_')
+                    ])
                     
                     print("\n📊 Sending Statistics:")
                     print("─" * 60)
                     print(f"  Total contacts: {total}")
-                    print(f"  Sent successfully: {sent - errors}")
+                    print(f"  Sent successfully: {sent_success}")
                     print(f"  Failed (errors): {errors}")
                     print(f"  Unsent: {unsent}")
                     print(f"  Authenticated accounts: {len(authenticated_accounts)}")
