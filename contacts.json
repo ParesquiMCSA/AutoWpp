@@ -1,0 +1,10 @@
+[
+  {
+    "phone": "+5531991376705",
+    "message": "Hello! This is a test message from our system.",
+    "delay": 3000,
+    "sent": false,
+    "sentBy": null,
+    "sentAt": null
+  }
+]
