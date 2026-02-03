@@ -110,15 +110,21 @@ def mark_contact_status(phone, account_id, success=True):
 
 def get_next_account():
     """Select next authenticated account using random selection with max 3 consecutive rule"""
+    authenticated = [acc for acc in ACCOUNTS if acc['authenticated']]
+    multiple_accounts = len(ACCOUNTS) > 1 and len(authenticated) > 1
+
+    if not multiple_accounts:
+        return authenticated[0] if authenticated else None
+
     # Only use authenticated accounts
-    available = [acc for acc in ACCOUNTS if acc['authenticated'] and acc['consecutive_uses'] < MAX_CONSECUTIVE_USES]
+    available = [acc for acc in authenticated if acc['consecutive_uses'] < MAX_CONSECUTIVE_USES]
     
     if not available:
         # Reset all counters if all accounts hit the limit
         for acc in ACCOUNTS:
             if acc['authenticated']:
                 acc['consecutive_uses'] = 0
-        available = [acc for acc in ACCOUNTS if acc['authenticated']]
+        available = authenticated
     
     if not available:
         return None
