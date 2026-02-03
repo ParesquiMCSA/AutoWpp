@@ -21,7 +21,7 @@ let contacts = [];
 const SHEET_ID = process.env.GOOGLE_SHEET_ID || '1aeM9KBSpkO37yEkxwn9X506Xlm_eHGavdl4bfnjY_xc';
 const SHEET_RANGE = process.env.GOOGLE_SHEET_RANGE || 'A:C';
 const TOKEN_PATH = path.join(__dirname, 'token.json');
-const CREDENTIALS_PATH = path.join(__dirname, 'key.json');
+const CREDENTIALS_PATH = path.join(__dirname, 'Tetrakey.json');
 
 // Error reporting configuration
 const ERROR_REPORT_URL = 'https://Bad-monk-walking.ngrok-free.app/errorreport';
@@ -76,12 +76,6 @@ async function getSheetsClient() {
         sheetsClientPromise = (async () => {
             const credentials = JSON.parse(fs.readFileSync(CREDENTIALS_PATH, 'utf8'));
             const token = JSON.parse(fs.readFileSync(TOKEN_PATH, 'utf8'));
-            const requiredScopes = ['https://www.googleapis.com/auth/spreadsheets'];
-
-            if (!token.scope || !token.scope.includes(requiredScopes[0])) {
-                console.warn(`[${accountId}] ⚠️  Google token missing Sheets scope. Re-authenticate with: ${requiredScopes.join(' ')}`);
-            }
-
             const { client_id, client_secret, redirect_uris } = credentials.installed || credentials.web;
             const auth = new google.auth.OAuth2(client_id, client_secret, redirect_uris[0]);
             auth.setCredentials(token);
@@ -253,15 +247,15 @@ client.on('message_create', async (message) => {
                 if (!state.cpf && isValidCpfFormat(text)) {
                     state.cpf = text;
                     state.step = 'email';
-                    await client.sendMessage(message.from, 'Obrigado! Agora, por favor, informe seu e-mail:');
+                    await client.sendMessage(message.from, 'Obrigado! Agora informe seu e-mail, por gentiliza:');
                     console.log(`[${accountId}] ✅ CPF received from ${message.from}`);
                 } else if (!state.cpf) {
-                    await client.sendMessage(message.from, 'Para continuarmos, por favor informe seu CPF (apenas números ou com pontuação).');
+                    await client.sendMessage(message.from, 'Para continuarmos, por favor informe seu CPF, conforme as leis da LGPD.');
                 } else {
                     await client.sendMessage(message.from, 'Estamos aguardando seu e-mail para continuar.');
                 }
             } else if (state.step === 'email') {
-                if (!state.email && isValidEmailFormat(text)) {
+                if (!state.email) {
                     state.email = text;
                     state.step = 'done';
                     const phoneNumber = message.from.replace('@c.us', '');
@@ -274,7 +268,7 @@ client.on('message_create', async (message) => {
                     await client.sendMessage(message.from, 'Já recebemos seus dados. Em breve entraremos em contato.');
                 }
             } else {
-                await client.sendMessage(message.from, 'Se precisar de ajuda adicional, é só avisar!');
+                await client.sendMessage(message.from, 'Seu caso já foi registrado, um especialista entrará em contato em breve. 😊');
             }
             console.log(`[${accountId}] ✅ Auto-replied to ${message.from}`);
         } catch (error) {

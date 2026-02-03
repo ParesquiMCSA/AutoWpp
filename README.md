@@ -87,8 +87,7 @@ Quando o cliente envia CPF e e-mail, o bot registra os dados em uma planilha. Pa
 
 1. Salve os arquivos `key.json` e `token.json` na raiz do projeto.\
 2. Garanta que a planilha tenha as colunas `Número`, `CPF` e `EMAIL`.\
-3. Garanta que o token tenha o escopo `https://www.googleapis.com/auth/spreadsheets` (se aparecer erro de escopo, reautentique com esse escopo).\
-4. Ajuste as variáveis de ambiente se necessário:\
+3. Ajuste as variáveis de ambiente se necessário:\
    - `GOOGLE_SHEET_ID` (padrão: planilha do link fornecido)\
    - `GOOGLE_SHEET_RANGE` (padrão: `A:C`)
 
