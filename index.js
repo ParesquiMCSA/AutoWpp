@@ -168,12 +168,56 @@ client.on('disconnected', (reason) => {
 });
 
 // Auto-reply to any incoming message
+const leadCapture = new Map();
+
+function getLeadState(chatId) {
+    if (!leadCapture.has(chatId)) {
+        leadCapture.set(chatId, { step: 'cpf', cpf: null, email: null });
+    }
+    return leadCapture.get(chatId);
+}
+
+function isValidCpfFormat(value) {
+    return /\d{3}\.?\d{3}\.?\d{3}-?\d{2}/.test(value);
+}
+
+function isValidEmailFormat(value) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
 client.on('message_create', async (message) => {
     // Only reply to messages we receive (not messages we send)
     if (!message.fromMe && message.body) {
         try {
             console.log(`[${accountId}] 📨 Received message from ${message.from}: "${message.body}"`);
-            await client.sendMessage(message.from, 'Um momento!');
+            const state = getLeadState(message.from);
+            const text = message.body.trim();
+
+            if (state.step === 'cpf') {
+                if (!state.cpf && isValidCpfFormat(text)) {
+                    state.cpf = text;
+                    state.step = 'email';
+                    await client.sendMessage(message.from, 'Obrigado! Agora, por favor, informe seu e-mail:');
+                    console.log(`[${accountId}] ✅ CPF received from ${message.from}`);
+                } else if (!state.cpf) {
+                    await client.sendMessage(message.from, 'Para continuarmos, por favor informe seu CPF (apenas números ou com pontuação).');
+                } else {
+                    await client.sendMessage(message.from, 'Estamos aguardando seu e-mail para continuar.');
+                }
+            } else if (state.step === 'email') {
+                if (!state.email && isValidEmailFormat(text)) {
+                    state.email = text;
+                    state.step = 'done';
+                    console.log(`[${accountId}] 📌 Lead captured from ${message.from}: CPF=${state.cpf} Email=${state.email}`);
+                    await client.sendMessage(message.from, 'Obrigado! Um especialista entrará em contato em breve.');
+                } else if (!state.email) {
+                    await client.sendMessage(message.from, 'E-mail inválido. Pode informar novamente?');
+                } else {
+                    await client.sendMessage(message.from, 'Já recebemos seus dados. Em breve entraremos em contato.');
+                }
+            } else {
+                await client.sendMessage(message.from, 'Se precisar de ajuda adicional, é só avisar!');
+            }
             console.log(`[${accountId}] ✅ Auto-replied to ${message.from}`);
         } catch (error) {
             console.error(`[${accountId}] ❌ Error replying to ${message.from}:`, error.message);
