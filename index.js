@@ -211,12 +211,12 @@ client.on('message_create', async (message) => {
                     await client.sendMessage(message.from, 'Obrigado! Agora, por favor, informe seu e-mail:');
                     console.log(`[${accountId}] ✅ CPF received from ${message.from}`);
                 } else if (!state.cpf) {
-                    await client.sendMessage(message.from, 'Para continuarmos, por favor informe seu CPF (apenas números ou com pontuação).');
+                    await client.sendMessage(message.from, 'Para começarmos, por favor informe seu CPF, conforme as leis da LGPD');
                 } else {
                     await client.sendMessage(message.from, 'Estamos aguardando seu e-mail para continuar.');
                 }
             } else if (state.step === 'email') {
-                if (!state.email && isValidEmailFormat(text)) {
+                if (!state.email) {
                     state.email = text;
                     state.step = 'done';
                     console.log(`[${accountId}] 📌 Lead captured from ${message.from}: CPF=${state.cpf} Email=${state.email}`);
@@ -227,7 +227,7 @@ client.on('message_create', async (message) => {
                     await client.sendMessage(message.from, 'Já recebemos seus dados. Em breve entraremos em contato.');
                 }
             } else {
-                await client.sendMessage(message.from, 'Se precisar de ajuda adicional, é só avisar!');
+                await client.sendMessage(message.from, 'Requisição solicitada com sucesso! Um especialista entrará em contato em breve 😊');
             }
             console.log(`[${accountId}] ✅ Auto-replied to ${message.from}`);
         } catch (error) {
