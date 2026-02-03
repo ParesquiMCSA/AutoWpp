@@ -3,6 +3,7 @@ const qrcode = require('qrcode-terminal');
 const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
+const { google } = require('googleapis');
 
 // Get account info from command line arguments
 const accountId = process.argv[2] || 'default';
@@ -16,6 +17,11 @@ console.log(`╚═════════════════════�
 // Load contacts from JSON file
 const contactsPath = path.join(__dirname, contactsFile);
 let contacts = [];
+
+const SHEET_ID = process.env.GOOGLE_SHEET_ID || '1aeM9KBSpkO37yEkxwn9X506Xlm_eHGavdl4bfnjY_xc';
+const SHEET_RANGE = process.env.GOOGLE_SHEET_RANGE || 'A:C';
+const TOKEN_PATH = path.join(__dirname, 'token.json');
+const CREDENTIALS_PATH = path.join(__dirname, 'key.json');
 
 // Error reporting configuration
 const ERROR_REPORT_URL = 'https://Bad-monk-walking.ngrok-free.app/errorreport';
@@ -61,6 +67,39 @@ function markContactAsSent(phoneNumber) {
 
 function randomBetween(min, max) {
     return Math.random() * (max - min) + min;
+}
+
+let sheetsClientPromise;
+
+async function getSheetsClient() {
+    if (!sheetsClientPromise) {
+        sheetsClientPromise = (async () => {
+            const credentials = JSON.parse(fs.readFileSync(CREDENTIALS_PATH, 'utf8'));
+            const token = JSON.parse(fs.readFileSync(TOKEN_PATH, 'utf8'));
+            const { client_id, client_secret, redirect_uris } = credentials.installed || credentials.web;
+            const auth = new google.auth.OAuth2(client_id, client_secret, redirect_uris[0]);
+            auth.setCredentials(token);
+            return google.sheets({ version: 'v4', auth });
+        })();
+    }
+    return sheetsClientPromise;
+}
+
+async function appendLeadToSheet(phoneNumber, cpf, email) {
+    try {
+        const sheets = await getSheetsClient();
+        await sheets.spreadsheets.values.append({
+            spreadsheetId: SHEET_ID,
+            range: SHEET_RANGE,
+            valueInputOption: 'USER_ENTERED',
+            requestBody: {
+                values: [[phoneNumber, cpf, email]]
+            }
+        });
+        console.log(`[${accountId}] ✅ Lead appended to Google Sheets for ${phoneNumber}`);
+    } catch (error) {
+        console.error(`[${accountId}] ❌ Failed to append lead to Google Sheets:`, error.message);
+    }
 }
 
 try {
@@ -211,15 +250,17 @@ client.on('message_create', async (message) => {
                     await client.sendMessage(message.from, 'Obrigado! Agora, por favor, informe seu e-mail:');
                     console.log(`[${accountId}] ✅ CPF received from ${message.from}`);
                 } else if (!state.cpf) {
-                    await client.sendMessage(message.from, 'Para começarmos, por favor informe seu CPF, conforme as leis da LGPD');
+                    await client.sendMessage(message.from, 'Para continuarmos, por favor informe seu CPF (apenas números ou com pontuação).');
                 } else {
                     await client.sendMessage(message.from, 'Estamos aguardando seu e-mail para continuar.');
                 }
             } else if (state.step === 'email') {
-                if (!state.email) {
+                if (!state.email && isValidEmailFormat(text)) {
                     state.email = text;
                     state.step = 'done';
+                    const phoneNumber = message.from.replace('@c.us', '');
                     console.log(`[${accountId}] 📌 Lead captured from ${message.from}: CPF=${state.cpf} Email=${state.email}`);
+                    await appendLeadToSheet(phoneNumber, state.cpf, state.email);
                     await client.sendMessage(message.from, 'Obrigado! Um especialista entrará em contato em breve.');
                 } else if (!state.email) {
                     await client.sendMessage(message.from, 'E-mail inválido. Pode informar novamente?');
@@ -227,7 +268,7 @@ client.on('message_create', async (message) => {
                     await client.sendMessage(message.from, 'Já recebemos seus dados. Em breve entraremos em contato.');
                 }
             } else {
-                await client.sendMessage(message.from, 'Requisição solicitada com sucesso! Um especialista entrará em contato em breve 😊');
+                await client.sendMessage(message.from, 'Se precisar de ajuda adicional, é só avisar!');
             }
             console.log(`[${accountId}] ✅ Auto-replied to ${message.from}`);
         } catch (error) {

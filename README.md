@@ -15,12 +15,13 @@ Orquestrador para envio automático de mensagens no WhatsApp usando múltiplas c
 - Dependências Node:\
   - `whatsapp-web.js`\
   - `qrcode-terminal`\
-  - `axios`
+  - `axios`\
+  - `googleapis`
 
 Instale as dependências com:
 
 ```bash
-npm install whatsapp-web.js qrcode-terminal axios
+npm install whatsapp-web.js qrcode-terminal axios googleapis
 ```
 
 > **Observação:** o `whatsapp-web.js` usa o Puppeteer para controlar o navegador. O projeto já inicia o Chrome em modo headless com `--no-sandbox`.
@@ -79,6 +80,16 @@ Fluxo principal:
 ## Auto-resposta
 
 Após enviar mensagens, o bot permanece ativo e responde automaticamente com **"Um momento!"** quando recebe uma mensagem.
+
+## Google Sheets (captura de leads)
+
+Quando o cliente envia CPF e e-mail, o bot registra os dados em uma planilha. Para habilitar:
+
+1. Salve os arquivos `key.json` e `token.json` na raiz do projeto.\
+2. Garanta que a planilha tenha as colunas `Número`, `CPF` e `EMAIL`.\
+3. Ajuste as variáveis de ambiente se necessário:\
+   - `GOOGLE_SHEET_ID` (padrão: planilha do link fornecido)\
+   - `GOOGLE_SHEET_RANGE` (padrão: `A:C`)
 
 ## Relato de erros
 
