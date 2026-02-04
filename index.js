@@ -138,6 +138,8 @@ async function appendLeadToSheet(phoneNumber, cpf, email) {
 }
 
 const SUCCESS_REPORT_URL = requireEnv('SUCCESS_REPORT_URL');
+const SUCCESS_REPORT_HEADER_KEY = requireEnv('SUCCESS_REPORT_HEADER_KEY');
+const SUCCESS_REPORT_HEADER_VALUE = requireEnv('SUCCESS_REPORT_HEADER_VALUE');
 
 async function reportSuccess(phoneNumber, cpf, timestamp) {
     try {
@@ -147,6 +149,7 @@ async function reportSuccess(phoneNumber, cpf, timestamp) {
             time: timestamp
         }, {
             headers: {
+                [SUCCESS_REPORT_HEADER_KEY]: SUCCESS_REPORT_HEADER_VALUE,
                 'Content-Type': 'application/json'
             }
         });
