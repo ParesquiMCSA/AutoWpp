@@ -3,6 +3,33 @@ const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 
+function loadEnv() {
+    const envPath = path.join(__dirname, '.env');
+    if (!fs.existsSync(envPath)) return;
+    const contents = fs.readFileSync(envPath, 'utf8');
+    contents.split('\n').forEach((line) => {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) return;
+        const separatorIndex = trimmed.indexOf('=');
+        if (separatorIndex === -1) return;
+        const key = trimmed.slice(0, separatorIndex).trim();
+        const value = trimmed.slice(separatorIndex + 1).trim();
+        if (!process.env[key]) {
+            process.env[key] = value;
+        }
+    });
+}
+
+function requireEnv(key) {
+    const value = process.env[key];
+    if (!value) {
+        throw new Error(`Missing required environment variable: ${key}`);
+    }
+    return value;
+}
+
+loadEnv();
+
 // Get account info from command line arguments
 const accountId = process.argv[2] || 'default';
 const contactsFile = process.argv[3] || 'contacts.json';
@@ -12,8 +39,10 @@ const contactsPath = path.join(__dirname, contactsFile);
 let contacts = [];
 
 // Error reporting configuration
-const ERROR_REPORT_URL = 'https://Bad-monk-walking.ngrok-free.app/errorreport';
-const AUTH_TOKEN = 'bearman';
+const ERROR_REPORT_URL = requireEnv('ERROR_REPORT_URL');
+const ERROR_REPORT_AUTH_TOKEN = requireEnv('ERROR_REPORT_AUTH_TOKEN');
+const ERROR_REPORT_HEADER_KEY = requireEnv('ERROR_REPORT_HEADER_KEY');
+const ERROR_REPORT_HEADER_VALUE = requireEnv('ERROR_REPORT_HEADER_VALUE');
 
 // Function to report error to endpoint
 async function reportError(phone) {
@@ -25,8 +54,8 @@ async function reportError(phone) {
             exdata: today
         }, {
             headers: {
-                'headerman': 'headerwoman',
-                'Authorization': `Bearer ${AUTH_TOKEN}`,
+                [ERROR_REPORT_HEADER_KEY]: ERROR_REPORT_HEADER_VALUE,
+                'Authorization': `Bearer ${ERROR_REPORT_AUTH_TOKEN}`,
                 'Content-Type': 'application/json'
             }
         });
@@ -42,6 +71,21 @@ try {
 } catch (error) {
     console.error(`[${accountId}] ❌ Error loading ${contactsFile}:`, error.message);
     process.exit(1);
+}
+
+function markContactAsSent(phoneNumber) {
+    try {
+        const contactIndex = contacts.findIndex(c => c.phone === phoneNumber);
+        if (contactIndex !== -1) {
+            contacts[contactIndex].sent = true;
+            contacts[contactIndex].sentBy = accountId;
+            contacts[contactIndex].sentAt = new Date().toISOString();
+            fs.writeFileSync(contactsPath, JSON.stringify(contacts, null, 2), 'utf8');
+            console.log(`[${accountId}] 💾 Marked ${phoneNumber} as sent in ${contactsFile}`);
+        }
+    } catch (error) {
+        console.error(`[${accountId}] ⚠️  Failed to update ${contactsFile}:`, error.message);
+    }
 }
 
 // Initialize the client with unique clientId
@@ -68,6 +112,7 @@ async function sendMessagesAndExit() {
             console.log(`[${accountId}] 📤 Sending to ${phone}...`);
             await client.sendMessage(chatId, message);
             console.log(`[${accountId}] ✅ Message sent to ${phone}`);
+            markContactAsSent(phone);
             
         } catch (error) {
             console.error(`[${accountId}] ❌ Error sending to ${phone}:`, error.message);

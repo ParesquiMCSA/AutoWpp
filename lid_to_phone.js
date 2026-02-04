@@ -1,6 +1,8 @@
 // lid_to_phone.js
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
+const fs = require('fs');
+const path = require('path');
 
 /**
  * @param {import('whatsapp-web.js').Client} client
@@ -29,10 +31,20 @@ client.on('qr', (qr) => {
 client.on('ready', async () => {
   try {
     const lid = process.argv[2];
-    if (!lid) throw new Error('Run: node lid_to_phone.js "ABC123@lid"');
+    const outputFile = process.argv[3] || 'lid_to_phone_output.txt';
+    if (!lid) throw new Error('Run: node lid_to_phone.js "ABC123@lid" [output_file]');
 
     const phone = await getPhoneFromLid(client, lid);
-    console.log('Phone:', phone);
+    if (!phone) {
+      throw new Error(`No phone number found for lid ${lid}`);
+    }
+
+    const formatted = `${phone}@c.us`;
+    console.log(`NUMBER: ${formatted}`);
+
+    const outputPath = path.resolve(process.cwd(), outputFile);
+    fs.writeFileSync(outputPath, phone, 'utf8');
+    console.log(`Saved number (without @c.us) to ${outputPath}`);
   } catch (err) {
     console.error('Error:', err?.message || err);
   } finally {
