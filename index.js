@@ -109,7 +109,8 @@ async function resolvePhoneNumber(client, from) {
     }
     if (from.endsWith('@lid')) {
         const results = await client.getContactLidAndPhone([from]);
-        return results?.[0]?.pn ?? null;
+        const phone = results?.[0]?.pn ?? null;
+        return phone ? phone.replace('@c.us', '') : null;
     }
     return null;
 }
