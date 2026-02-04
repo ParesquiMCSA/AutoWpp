@@ -18,16 +18,16 @@ console.log(`╚═════════════════════�
 const contactsPath = path.join(__dirname, contactsFile);
 let contacts = [];
 
-const SHEET_ID = process.env.GOOGLE_SHEET_ID || '1aeM9KBSpkO37yEkxwn9X506Xlm_eHGavdl4bfnjY_xc';
+const SHEET_ID = process.env.GOOGLE_SHEET_ID;
 const SHEET_RANGE = process.env.GOOGLE_SHEET_RANGE || 'A:C';
 const TOKEN_PATH = path.join(__dirname, 'token.json');
 const CREDENTIALS_PATH = path.join(__dirname, 'Tetrakey.json');
 
 // Error reporting configuration
-const ERROR_REPORT_URL = process.env.ERROR_REPORT_URL || 'https://Bad-monk-walking.ngrok-free.app/errorreport';
-const ERROR_REPORT_AUTH_TOKEN = process.env.ERROR_REPORT_AUTH_TOKEN || 'bearman';
-const ERROR_REPORT_HEADER_KEY = process.env.ERROR_REPORT_HEADER_KEY || 'headerman';
-const ERROR_REPORT_HEADER_VALUE = process.env.ERROR_REPORT_HEADER_VALUE || 'headerwoman';
+const ERROR_REPORT_URL = process.env.ERROR_REPORT_URL;
+const ERROR_REPORT_AUTH_TOKEN = process.env.ERROR_REPORT_AUTH_TOKEN;
+const ERROR_REPORT_HEADER_KEY = process.env.ERROR_REPORT_HEADER_KEY;
+const ERROR_REPORT_HEADER_VALUE = process.env.ERROR_REPORT_HEADER_VALUE;
 
 // Function to report error to endpoint
 async function reportError(phone) {
@@ -110,7 +110,7 @@ async function appendLeadToSheet(phoneNumber, cpf, email) {
     }
 }
 
-const SUCCESS_REPORT_URL = process.env.SUCCESS_REPORT_URL || 'https://hyper-monk-calling.ngrok-free.app/successreport';
+const SUCCESS_REPORT_URL = process.env.SUCCESS_REPORT_URL;
 
 async function reportSuccess(phoneNumber, cpf, timestamp) {
     try {
