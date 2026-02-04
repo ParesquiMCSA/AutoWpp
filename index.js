@@ -88,18 +88,34 @@ async function getSheetsClient() {
 async function appendLeadToSheet(phoneNumber, cpf, email) {
     try {
         const sheets = await getSheetsClient();
+        const now = new Date();
+        const pad = (value) => String(value).padStart(2, '0');
+        const timestamp = `${pad(now.getDate())}/${pad(now.getMonth() + 1)}/${String(now.getFullYear()).slice(-2)} - ${pad(now.getHours())}:${pad(now.getMinutes())}`;
         await sheets.spreadsheets.values.append({
             spreadsheetId: SHEET_ID,
             range: SHEET_RANGE,
             valueInputOption: 'USER_ENTERED',
             requestBody: {
-                values: [[phoneNumber, cpf, email]]
+                values: [[phoneNumber, cpf, email, timestamp]]
             }
         });
         console.log(`[${accountId}] ✅ Lead appended to Google Sheets for ${phoneNumber}`);
     } catch (error) {
         console.error(`[${accountId}] ❌ Failed to append lead to Google Sheets:`, error.message);
     }
+}
+
+async function resolvePhoneNumber(client, from) {
+    if (!from) return null;
+    if (from.endsWith('@c.us')) {
+        return from.replace('@c.us', '');
+    }
+    if (from.endsWith('@lid')) {
+        const results = await client.getContactLidAndPhone([from]);
+        const phone = results?.[0]?.pn ?? null;
+        return phone ? phone.replace('@c.us', '') : null;
+    }
+    return null;
 }
 
 try {
@@ -225,8 +241,13 @@ function getLeadState(chatId) {
     return leadCapture.get(chatId);
 }
 
-function isValidCpfFormat(value) {
-    return /\d{3}\.?\d{3}\.?\d{3}-?\d{2}/.test(value);
+function extractDocumentNumber(value) {
+    if (!value) return null;
+    const digits = value.replace(/\D/g, '');
+    if (digits.length === 11 || digits.length === 14) {
+        return digits;
+    }
+    return null;
 }
 
 function isValidEmailFormat(value) {
@@ -244,8 +265,9 @@ client.on('message_create', async (message) => {
             const text = message.body.trim();
 
             if (state.step === 'cpf') {
-                if (!state.cpf && isValidCpfFormat(text)) {
-                    state.cpf = text;
+                const documentNumber = extractDocumentNumber(text);
+                if (!state.cpf && documentNumber) {
+                    state.cpf = documentNumber;
                     state.step = 'email';
                     await client.sendMessage(message.from, 'Obrigado! Agora informe seu e-mail, por gentiliza:');
                     console.log(`[${accountId}] ✅ CPF received from ${message.from}`);
@@ -258,7 +280,10 @@ client.on('message_create', async (message) => {
                 if (!state.email) {
                     state.email = text;
                     state.step = 'done';
-                    const phoneNumber = message.from.replace('@c.us', '');
+                    const phoneNumber = await resolvePhoneNumber(client, message.from);
+                    if (!phoneNumber) {
+                        throw new Error(`Unable to resolve phone number for ${message.from}`);
+                    }
                     console.log(`[${accountId}] 📌 Lead captured from ${message.from}: CPF=${state.cpf} Email=${state.email}`);
                     await appendLeadToSheet(phoneNumber, state.cpf, state.email);
                     await client.sendMessage(message.from, 'Obrigado! Um especialista entrará em contato em breve.');
