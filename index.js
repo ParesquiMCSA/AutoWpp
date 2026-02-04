@@ -55,6 +55,8 @@ function markContactAsSent(phoneNumber) {
         const contactIndex = contacts.findIndex(c => c.phone === phoneNumber);
         if (contactIndex !== -1) {
             contacts[contactIndex].sent = true;
+            contacts[contactIndex].sentBy = accountId;
+            contacts[contactIndex].sentAt = new Date().toISOString();
             
             // Write updated contacts back to file
             fs.writeFileSync(contactsPath, JSON.stringify(contacts, null, 2), 'utf8');

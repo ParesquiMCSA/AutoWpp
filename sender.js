@@ -44,6 +44,21 @@ try {
     process.exit(1);
 }
 
+function markContactAsSent(phoneNumber) {
+    try {
+        const contactIndex = contacts.findIndex(c => c.phone === phoneNumber);
+        if (contactIndex !== -1) {
+            contacts[contactIndex].sent = true;
+            contacts[contactIndex].sentBy = accountId;
+            contacts[contactIndex].sentAt = new Date().toISOString();
+            fs.writeFileSync(contactsPath, JSON.stringify(contacts, null, 2), 'utf8');
+            console.log(`[${accountId}] 💾 Marked ${phoneNumber} as sent in ${contactsFile}`);
+        }
+    } catch (error) {
+        console.error(`[${accountId}] ⚠️  Failed to update ${contactsFile}:`, error.message);
+    }
+}
+
 // Initialize the client with unique clientId
 const client = new Client({
     authStrategy: new LocalAuth({ 
@@ -68,6 +83,7 @@ async function sendMessagesAndExit() {
             console.log(`[${accountId}] 📤 Sending to ${phone}...`);
             await client.sendMessage(chatId, message);
             console.log(`[${accountId}] ✅ Message sent to ${phone}`);
+            markContactAsSent(phone);
             
         } catch (error) {
             console.error(`[${accountId}] ❌ Error sending to ${phone}:`, error.message);
