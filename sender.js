@@ -12,8 +12,10 @@ const contactsPath = path.join(__dirname, contactsFile);
 let contacts = [];
 
 // Error reporting configuration
-const ERROR_REPORT_URL = 'https://Bad-monk-walking.ngrok-free.app/errorreport';
-const AUTH_TOKEN = 'bearman';
+const ERROR_REPORT_URL = process.env.ERROR_REPORT_URL || 'https://Bad-monk-walking.ngrok-free.app/errorreport';
+const ERROR_REPORT_AUTH_TOKEN = process.env.ERROR_REPORT_AUTH_TOKEN || 'bearman';
+const ERROR_REPORT_HEADER_KEY = process.env.ERROR_REPORT_HEADER_KEY || 'headerman';
+const ERROR_REPORT_HEADER_VALUE = process.env.ERROR_REPORT_HEADER_VALUE || 'headerwoman';
 
 // Function to report error to endpoint
 async function reportError(phone) {
@@ -25,8 +27,8 @@ async function reportError(phone) {
             exdata: today
         }, {
             headers: {
-                'headerman': 'headerwoman',
-                'Authorization': `Bearer ${AUTH_TOKEN}`,
+                [ERROR_REPORT_HEADER_KEY]: ERROR_REPORT_HEADER_VALUE,
+                'Authorization': `Bearer ${ERROR_REPORT_AUTH_TOKEN}`,
                 'Content-Type': 'application/json'
             }
         });
