@@ -5,6 +5,33 @@ const path = require('path');
 const axios = require('axios');
 const { google } = require('googleapis');
 
+function loadEnv() {
+    const envPath = path.join(__dirname, '.env');
+    if (!fs.existsSync(envPath)) return;
+    const contents = fs.readFileSync(envPath, 'utf8');
+    contents.split('\n').forEach((line) => {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) return;
+        const separatorIndex = trimmed.indexOf('=');
+        if (separatorIndex === -1) return;
+        const key = trimmed.slice(0, separatorIndex).trim();
+        const value = trimmed.slice(separatorIndex + 1).trim();
+        if (!process.env[key]) {
+            process.env[key] = value;
+        }
+    });
+}
+
+function requireEnv(key) {
+    const value = process.env[key];
+    if (!value) {
+        throw new Error(`Missing required environment variable: ${key}`);
+    }
+    return value;
+}
+
+loadEnv();
+
 // Get account info from command line arguments
 const accountId = process.argv[2] || 'default';
 const contactsFile = process.argv[3] || 'contacts.json';
@@ -18,16 +45,16 @@ console.log(`╚═════════════════════�
 const contactsPath = path.join(__dirname, contactsFile);
 let contacts = [];
 
-const SHEET_ID = process.env.GOOGLE_SHEET_ID;
-const SHEET_RANGE = process.env.GOOGLE_SHEET_RANGE || 'A:C';
+const SHEET_ID = requireEnv('GOOGLE_SHEET_ID');
+const SHEET_RANGE = requireEnv('GOOGLE_SHEET_RANGE');
 const TOKEN_PATH = path.join(__dirname, 'token.json');
 const CREDENTIALS_PATH = path.join(__dirname, 'Tetrakey.json');
 
 // Error reporting configuration
-const ERROR_REPORT_URL = process.env.ERROR_REPORT_URL;
-const ERROR_REPORT_AUTH_TOKEN = process.env.ERROR_REPORT_AUTH_TOKEN;
-const ERROR_REPORT_HEADER_KEY = process.env.ERROR_REPORT_HEADER_KEY;
-const ERROR_REPORT_HEADER_VALUE = process.env.ERROR_REPORT_HEADER_VALUE;
+const ERROR_REPORT_URL = requireEnv('ERROR_REPORT_URL');
+const ERROR_REPORT_AUTH_TOKEN = requireEnv('ERROR_REPORT_AUTH_TOKEN');
+const ERROR_REPORT_HEADER_KEY = requireEnv('ERROR_REPORT_HEADER_KEY');
+const ERROR_REPORT_HEADER_VALUE = requireEnv('ERROR_REPORT_HEADER_VALUE');
 
 // Function to report error to endpoint
 async function reportError(phone) {
@@ -110,7 +137,7 @@ async function appendLeadToSheet(phoneNumber, cpf, email) {
     }
 }
 
-const SUCCESS_REPORT_URL = process.env.SUCCESS_REPORT_URL;
+const SUCCESS_REPORT_URL = requireEnv('SUCCESS_REPORT_URL');
 
 async function reportSuccess(phoneNumber, cpf, timestamp) {
     try {

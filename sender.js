@@ -3,6 +3,33 @@ const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 
+function loadEnv() {
+    const envPath = path.join(__dirname, '.env');
+    if (!fs.existsSync(envPath)) return;
+    const contents = fs.readFileSync(envPath, 'utf8');
+    contents.split('\n').forEach((line) => {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) return;
+        const separatorIndex = trimmed.indexOf('=');
+        if (separatorIndex === -1) return;
+        const key = trimmed.slice(0, separatorIndex).trim();
+        const value = trimmed.slice(separatorIndex + 1).trim();
+        if (!process.env[key]) {
+            process.env[key] = value;
+        }
+    });
+}
+
+function requireEnv(key) {
+    const value = process.env[key];
+    if (!value) {
+        throw new Error(`Missing required environment variable: ${key}`);
+    }
+    return value;
+}
+
+loadEnv();
+
 // Get account info from command line arguments
 const accountId = process.argv[2] || 'default';
 const contactsFile = process.argv[3] || 'contacts.json';
@@ -12,10 +39,10 @@ const contactsPath = path.join(__dirname, contactsFile);
 let contacts = [];
 
 // Error reporting configuration
-const ERROR_REPORT_URL = process.env.ERROR_REPORT_URL || 'https://Bad-monk-walking.ngrok-free.app/errorreport';
-const ERROR_REPORT_AUTH_TOKEN = process.env.ERROR_REPORT_AUTH_TOKEN || 'bearman';
-const ERROR_REPORT_HEADER_KEY = process.env.ERROR_REPORT_HEADER_KEY || 'headerman';
-const ERROR_REPORT_HEADER_VALUE = process.env.ERROR_REPORT_HEADER_VALUE || 'headerwoman';
+const ERROR_REPORT_URL = requireEnv('ERROR_REPORT_URL');
+const ERROR_REPORT_AUTH_TOKEN = requireEnv('ERROR_REPORT_AUTH_TOKEN');
+const ERROR_REPORT_HEADER_KEY = requireEnv('ERROR_REPORT_HEADER_KEY');
+const ERROR_REPORT_HEADER_VALUE = requireEnv('ERROR_REPORT_HEADER_VALUE');
 
 // Function to report error to endpoint
 async function reportError(phone) {
