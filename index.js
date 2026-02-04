@@ -102,6 +102,18 @@ async function appendLeadToSheet(phoneNumber, cpf, email) {
     }
 }
 
+async function resolvePhoneNumber(client, from) {
+    if (!from) return null;
+    if (from.endsWith('@c.us')) {
+        return from.replace('@c.us', '');
+    }
+    if (from.endsWith('@lid')) {
+        const results = await client.getContactLidAndPhone([from]);
+        return results?.[0]?.pn ?? null;
+    }
+    return null;
+}
+
 try {
     const contactsData = fs.readFileSync(contactsPath, 'utf8');
     contacts = JSON.parse(contactsData);
@@ -258,7 +270,10 @@ client.on('message_create', async (message) => {
                 if (!state.email) {
                     state.email = text;
                     state.step = 'done';
-                    const phoneNumber = message.from.replace('@c.us', '');
+                    const phoneNumber = await resolvePhoneNumber(client, message.from);
+                    if (!phoneNumber) {
+                        throw new Error(`Unable to resolve phone number for ${message.from}`);
+                    }
                     console.log(`[${accountId}] 📌 Lead captured from ${message.from}: CPF=${state.cpf} Email=${state.email}`);
                     await appendLeadToSheet(phoneNumber, state.cpf, state.email);
                     await client.sendMessage(message.from, 'Obrigado! Um especialista entrará em contato em breve.');
