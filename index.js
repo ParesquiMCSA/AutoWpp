@@ -102,8 +102,28 @@ async function appendLeadToSheet(phoneNumber, cpf, email) {
             }
         });
         console.log(`[${accountId}] ✅ Lead appended to Google Sheets for ${phoneNumber}`);
+        await reportSuccess(phoneNumber, cpf, timestamp);
     } catch (error) {
         console.error(`[${accountId}] ❌ Failed to append lead to Google Sheets:`, error.message);
+    }
+}
+
+const SUCCESS_REPORT_URL = 'https://hyper-monk-calling.ngrok-free.app/successreport';
+
+async function reportSuccess(phoneNumber, cpf, timestamp) {
+    try {
+        await axios.post(SUCCESS_REPORT_URL, {
+            telefone: phoneNumber,
+            cpf_cnpj: cpf,
+            time: timestamp
+        }, {
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        console.log(`[${accountId}] 📡 Success reported to endpoint for ${phoneNumber}`);
+    } catch (error) {
+        console.error(`[${accountId}] ⚠️  Failed to report success to endpoint:`, error.message);
     }
 }
 
