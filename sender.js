@@ -12,8 +12,10 @@ const contactsPath = path.join(__dirname, contactsFile);
 let contacts = [];
 
 // Error reporting configuration
-const ERROR_REPORT_URL = 'https://Bad-monk-walking.ngrok-free.app/errorreport';
-const AUTH_TOKEN = 'bearman';
+const ERROR_REPORT_URL = process.env.ERROR_REPORT_URL || 'https://Bad-monk-walking.ngrok-free.app/errorreport';
+const ERROR_REPORT_AUTH_TOKEN = process.env.ERROR_REPORT_AUTH_TOKEN || 'bearman';
+const ERROR_REPORT_HEADER_KEY = process.env.ERROR_REPORT_HEADER_KEY || 'headerman';
+const ERROR_REPORT_HEADER_VALUE = process.env.ERROR_REPORT_HEADER_VALUE || 'headerwoman';
 
 // Function to report error to endpoint
 async function reportError(phone) {
@@ -25,8 +27,8 @@ async function reportError(phone) {
             exdata: today
         }, {
             headers: {
-                'headerman': 'headerwoman',
-                'Authorization': `Bearer ${AUTH_TOKEN}`,
+                [ERROR_REPORT_HEADER_KEY]: ERROR_REPORT_HEADER_VALUE,
+                'Authorization': `Bearer ${ERROR_REPORT_AUTH_TOKEN}`,
                 'Content-Type': 'application/json'
             }
         });
@@ -42,6 +44,21 @@ try {
 } catch (error) {
     console.error(`[${accountId}] ❌ Error loading ${contactsFile}:`, error.message);
     process.exit(1);
+}
+
+function markContactAsSent(phoneNumber) {
+    try {
+        const contactIndex = contacts.findIndex(c => c.phone === phoneNumber);
+        if (contactIndex !== -1) {
+            contacts[contactIndex].sent = true;
+            contacts[contactIndex].sentBy = accountId;
+            contacts[contactIndex].sentAt = new Date().toISOString();
+            fs.writeFileSync(contactsPath, JSON.stringify(contacts, null, 2), 'utf8');
+            console.log(`[${accountId}] 💾 Marked ${phoneNumber} as sent in ${contactsFile}`);
+        }
+    } catch (error) {
+        console.error(`[${accountId}] ⚠️  Failed to update ${contactsFile}:`, error.message);
+    }
 }
 
 // Initialize the client with unique clientId
@@ -68,6 +85,7 @@ async function sendMessagesAndExit() {
             console.log(`[${accountId}] 📤 Sending to ${phone}...`);
             await client.sendMessage(chatId, message);
             console.log(`[${accountId}] ✅ Message sent to ${phone}`);
+            markContactAsSent(phone);
             
         } catch (error) {
             console.error(`[${accountId}] ❌ Error sending to ${phone}:`, error.message);

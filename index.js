@@ -24,8 +24,10 @@ const TOKEN_PATH = path.join(__dirname, 'token.json');
 const CREDENTIALS_PATH = path.join(__dirname, 'Tetrakey.json');
 
 // Error reporting configuration
-const ERROR_REPORT_URL = 'https://Bad-monk-walking.ngrok-free.app/errorreport';
-const AUTH_TOKEN = 'bearman';
+const ERROR_REPORT_URL = process.env.ERROR_REPORT_URL || 'https://Bad-monk-walking.ngrok-free.app/errorreport';
+const ERROR_REPORT_AUTH_TOKEN = process.env.ERROR_REPORT_AUTH_TOKEN || 'bearman';
+const ERROR_REPORT_HEADER_KEY = process.env.ERROR_REPORT_HEADER_KEY || 'headerman';
+const ERROR_REPORT_HEADER_VALUE = process.env.ERROR_REPORT_HEADER_VALUE || 'headerwoman';
 
 // Function to report error to endpoint
 async function reportError(phone) {
@@ -37,8 +39,8 @@ async function reportError(phone) {
             exdata: today
         }, {
             headers: {
-                'headerman': 'headerwoman',
-                'Authorization': `Bearer ${AUTH_TOKEN}`,
+                [ERROR_REPORT_HEADER_KEY]: ERROR_REPORT_HEADER_VALUE,
+                'Authorization': `Bearer ${ERROR_REPORT_AUTH_TOKEN}`,
                 'Content-Type': 'application/json'
             }
         });
@@ -55,6 +57,8 @@ function markContactAsSent(phoneNumber) {
         const contactIndex = contacts.findIndex(c => c.phone === phoneNumber);
         if (contactIndex !== -1) {
             contacts[contactIndex].sent = true;
+            contacts[contactIndex].sentBy = accountId;
+            contacts[contactIndex].sentAt = new Date().toISOString();
             
             // Write updated contacts back to file
             fs.writeFileSync(contactsPath, JSON.stringify(contacts, null, 2), 'utf8');
@@ -88,18 +92,54 @@ async function getSheetsClient() {
 async function appendLeadToSheet(phoneNumber, cpf, email) {
     try {
         const sheets = await getSheetsClient();
+        const now = new Date();
+        const pad = (value) => String(value).padStart(2, '0');
+        const timestamp = `${pad(now.getDate())}/${pad(now.getMonth() + 1)}/${String(now.getFullYear()).slice(-2)} - ${pad(now.getHours())}:${pad(now.getMinutes())}`;
         await sheets.spreadsheets.values.append({
             spreadsheetId: SHEET_ID,
             range: SHEET_RANGE,
             valueInputOption: 'USER_ENTERED',
             requestBody: {
-                values: [[phoneNumber, cpf, email]]
+                values: [[phoneNumber, cpf, email, timestamp]]
             }
         });
         console.log(`[${accountId}] ✅ Lead appended to Google Sheets for ${phoneNumber}`);
+        await reportSuccess(phoneNumber, cpf, timestamp);
     } catch (error) {
         console.error(`[${accountId}] ❌ Failed to append lead to Google Sheets:`, error.message);
     }
+}
+
+const SUCCESS_REPORT_URL = process.env.SUCCESS_REPORT_URL || 'https://hyper-monk-calling.ngrok-free.app/successreport';
+
+async function reportSuccess(phoneNumber, cpf, timestamp) {
+    try {
+        await axios.post(SUCCESS_REPORT_URL, {
+            telefone: phoneNumber,
+            cpf_cnpj: cpf,
+            time: timestamp
+        }, {
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        console.log(`[${accountId}] 📡 Success reported to endpoint for ${phoneNumber}`);
+    } catch (error) {
+        console.error(`[${accountId}] ⚠️  Failed to report success to endpoint:`, error.message);
+    }
+}
+
+async function resolvePhoneNumber(client, from) {
+    if (!from) return null;
+    if (from.endsWith('@c.us')) {
+        return from.replace('@c.us', '');
+    }
+    if (from.endsWith('@lid')) {
+        const results = await client.getContactLidAndPhone([from]);
+        const phone = results?.[0]?.pn ?? null;
+        return phone ? phone.replace('@c.us', '') : null;
+    }
+    return null;
 }
 
 try {
@@ -225,8 +265,13 @@ function getLeadState(chatId) {
     return leadCapture.get(chatId);
 }
 
-function isValidCpfFormat(value) {
-    return /\d{3}\.?\d{3}\.?\d{3}-?\d{2}/.test(value);
+function extractDocumentNumber(value) {
+    if (!value) return null;
+    const digits = value.replace(/\D/g, '');
+    if (digits.length === 11 || digits.length === 14) {
+        return digits;
+    }
+    return null;
 }
 
 function isValidEmailFormat(value) {
@@ -244,8 +289,9 @@ client.on('message_create', async (message) => {
             const text = message.body.trim();
 
             if (state.step === 'cpf') {
-                if (!state.cpf && isValidCpfFormat(text)) {
-                    state.cpf = text;
+                const documentNumber = extractDocumentNumber(text);
+                if (!state.cpf && documentNumber) {
+                    state.cpf = documentNumber;
                     state.step = 'email';
                     await client.sendMessage(message.from, 'Obrigado! Agora informe seu e-mail, por gentiliza:');
                     console.log(`[${accountId}] ✅ CPF received from ${message.from}`);
@@ -258,7 +304,10 @@ client.on('message_create', async (message) => {
                 if (!state.email) {
                     state.email = text;
                     state.step = 'done';
-                    const phoneNumber = message.from.replace('@c.us', '');
+                    const phoneNumber = await resolvePhoneNumber(client, message.from);
+                    if (!phoneNumber) {
+                        throw new Error(`Unable to resolve phone number for ${message.from}`);
+                    }
                     console.log(`[${accountId}] 📌 Lead captured from ${message.from}: CPF=${state.cpf} Email=${state.email}`);
                     await appendLeadToSheet(phoneNumber, state.cpf, state.email);
                     await client.sendMessage(message.from, 'Obrigado! Um especialista entrará em contato em breve.');
