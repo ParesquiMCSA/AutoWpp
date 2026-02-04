@@ -88,12 +88,15 @@ async function getSheetsClient() {
 async function appendLeadToSheet(phoneNumber, cpf, email) {
     try {
         const sheets = await getSheetsClient();
+        const now = new Date();
+        const pad = (value) => String(value).padStart(2, '0');
+        const timestamp = `${pad(now.getDate())}/${pad(now.getMonth() + 1)}/${String(now.getFullYear()).slice(-2)} - ${pad(now.getHours())}:${pad(now.getMinutes())}`;
         await sheets.spreadsheets.values.append({
             spreadsheetId: SHEET_ID,
             range: SHEET_RANGE,
             valueInputOption: 'USER_ENTERED',
             requestBody: {
-                values: [[phoneNumber, cpf, email]]
+                values: [[phoneNumber, cpf, email, timestamp]]
             }
         });
         console.log(`[${accountId}] ✅ Lead appended to Google Sheets for ${phoneNumber}`);
