@@ -241,8 +241,13 @@ function getLeadState(chatId) {
     return leadCapture.get(chatId);
 }
 
-function isValidCpfFormat(value) {
-    return /\d{3}\.?\d{3}\.?\d{3}-?\d{2}/.test(value);
+function extractDocumentNumber(value) {
+    if (!value) return null;
+    const digits = value.replace(/\D/g, '');
+    if (digits.length === 11 || digits.length === 14) {
+        return digits;
+    }
+    return null;
 }
 
 function isValidEmailFormat(value) {
@@ -260,8 +265,9 @@ client.on('message_create', async (message) => {
             const text = message.body.trim();
 
             if (state.step === 'cpf') {
-                if (!state.cpf && isValidCpfFormat(text)) {
-                    state.cpf = text;
+                const documentNumber = extractDocumentNumber(text);
+                if (!state.cpf && documentNumber) {
+                    state.cpf = documentNumber;
                     state.step = 'email';
                     await client.sendMessage(message.from, 'Obrigado! Agora informe seu e-mail, por gentiliza:');
                     console.log(`[${accountId}] ✅ CPF received from ${message.from}`);
