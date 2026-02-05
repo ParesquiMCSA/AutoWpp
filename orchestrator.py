@@ -379,8 +379,8 @@ def coordinator_loop():
         message = settings.CONTACT_MESSAGE
         if not message:
             print("⚠️  CONTACT_MESSAGE is empty. Skipping contacts generation and sending.")
-            return\
-            df_to_contacts_json(
+            return
+        df_to_contacts_json(
             pending_contacts_df,
             message,
             output_path=CONTACTS_FILE,
