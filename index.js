@@ -287,10 +287,18 @@ client.on('disconnected', (reason) => {
 
 // Auto-reply to any incoming message
 const leadCapture = new Map();
+const MAX_WRONG_ANSWERS = 5;
 
 function getLeadState(chatId) {
     if (!leadCapture.has(chatId)) {
-        leadCapture.set(chatId, { step: 'cpf', cpf: null, email: null });
+        leadCapture.set(chatId, {
+            step: 'cpf',
+            cpf: null,
+            email: null,
+            invalidCpfAttempts: 0,
+            postCompletionReplies: 0,
+            blocked: false
+        });
     }
     return leadCapture.get(chatId);
 }
@@ -318,6 +326,11 @@ client.on('message_create', async (message) => {
             const state = getLeadState(message.from);
             const text = message.body.trim();
 
+            if (state.blocked) {
+                console.log(`[${accountId}] 🛑 Ignoring ${message.from} due to max wrong answers reached.`);
+                return;
+            }
+
             if (state.step === 'cpf') {
                 const documentNumber = extractDocumentNumber(text);
                 if (!state.cpf && documentNumber) {
@@ -326,7 +339,17 @@ client.on('message_create', async (message) => {
                     await client.sendMessage(message.from, 'Obrigado! Agora informe seu e-mail, por gentiliza:');
                     console.log(`[${accountId}] ✅ CPF received from ${message.from}`);
                 } else if (!state.cpf) {
+                    state.invalidCpfAttempts += 1;
+                    if (state.invalidCpfAttempts > MAX_WRONG_ANSWERS) {
+                        state.blocked = true;
+                        console.log(`[${accountId}] 🛑 Max CPF attempts exceeded for ${message.from}.`);
+                        return;
+                    }
                     await client.sendMessage(message.from, 'Para continuarmos, por favor informe seu CPF, conforme as leis da LGPD.');
+                    if (state.invalidCpfAttempts === MAX_WRONG_ANSWERS) {
+                        state.blocked = true;
+                        console.log(`[${accountId}] 🛑 Max CPF attempts reached for ${message.from}. Blocking further replies.`);
+                    }
                 } else {
                     await client.sendMessage(message.from, 'Estamos aguardando seu e-mail para continuar.');
                 }
@@ -341,13 +364,21 @@ client.on('message_create', async (message) => {
                     console.log(`[${accountId}] 📌 Lead captured from ${message.from}: CPF=${state.cpf} Email=${state.email}`);
                     await appendLeadToSheet(phoneNumber, state.cpf, state.email);
                     await client.sendMessage(message.from, 'Obrigado! Um especialista entrará em contato em breve.');
-                } else if (!state.email) {
-                    await client.sendMessage(message.from, 'E-mail inválido. Pode informar novamente?');
                 } else {
                     await client.sendMessage(message.from, 'Já recebemos seus dados. Em breve entraremos em contato.');
                 }
             } else {
-                await client.sendMessage(message.from, 'Seu caso já foi registrado, um especialista entrará em contato em breve. 😊');
+                state.postCompletionReplies += 1;
+                if (state.postCompletionReplies > MAX_WRONG_ANSWERS) {
+                    state.blocked = true;
+                    console.log(`[${accountId}] 🛑 Max post-completion replies reached for ${message.from}. Blocking further replies.`);
+                    return;
+                }
+                await client.sendMessage(message.from, 'Já recebemos seus dados. Em breve entraremos em contato.');
+                if (state.postCompletionReplies === MAX_WRONG_ANSWERS) {
+                    state.blocked = true;
+                    console.log(`[${accountId}] 🛑 Max post-completion replies reached for ${message.from}. Blocking further replies.`);
+                }
             }
             console.log(`[${accountId}] ✅ Auto-replied to ${message.from}`);
         } catch (error) {
