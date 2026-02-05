@@ -345,7 +345,7 @@ client.on('message_create', async (message) => {
                         console.log(`[${accountId}] 🛑 Max CPF attempts exceeded for ${message.from}.`);
                         return;
                     }
-                    await client.sendMessage(message.from, 'Para continuarmos, por favor informe seu CPF, conforme as leis da LGPD.');
+                    await client.sendMessage(message.from, 'Para que a pessoa responsável pelo seu caso possa atendê-lo, por gentileza informe seu CPF ou CNPJ.');
                     if (state.invalidCpfAttempts === MAX_WRONG_ANSWERS) {
                         state.blocked = true;
                         console.log(`[${accountId}] 🛑 Max CPF attempts reached for ${message.from}. Blocking further replies.`);

@@ -9,3 +9,5 @@ package-lock.json
 package.json
 contacts.json
 .env
+.env
+__pycache__/settings.cpython-313.pyc
