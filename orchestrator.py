@@ -38,14 +38,6 @@ ACCOUNTS = [
         'authenticated': False,
         'ready': False,
         'consecutive_uses': 0
-    },
-    {
-        'id': 'account_3',
-        'name': 'Account 3',
-        'process': None,
-        'authenticated': False,
-        'ready': False,
-        'consecutive_uses': 0
     }
 ]
 

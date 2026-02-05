@@ -287,7 +287,7 @@ client.on('disconnected', (reason) => {
 
 // Auto-reply to any incoming message
 const leadCapture = new Map();
-const MAX_WRONG_ANSWERS = 5;
+const MAX_WRONG_ANSWERS = 3;
 
 function getLeadState(chatId) {
     if (!leadCapture.has(chatId)) {
