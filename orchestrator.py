@@ -89,7 +89,7 @@ def df_to_contacts_json(
 
     Expects a column named 'Telefone' (Brazil phone numbers).
     Writes an array of dicts, one per row, matching the provided template.
-    Alternates `sentBy` between authenticated accounts when provided.
+    Alternates `sentBy` between authenticated accounts (round-robin by row order).
 
     Returns the output file path.
     """
@@ -97,33 +97,47 @@ def df_to_contacts_json(
         raise ValueError("DataFrame must contain a 'Telefone' column.")
 
     def normalize_phone_br(value) -> str:
-        # Keep only digits
         digits = "".join(ch for ch in str(value) if ch.isdigit())
         if not digits:
             return "+55"  # fallback (still valid string)
 
-        # If it already includes country code 55, keep it; else add it
         if digits.startswith("55"):
             return f"+{digits}"
         return f"+55{digits}"
 
-    normalized_accounts: List[str] = list(account_ids or authenticated_accounts)
+    # Choose accounts: provided list > global authenticated_accounts
+    if account_ids is not None:
+        normalized_accounts: List[str] = list(account_ids)
+    else:
+        try:
+            normalized_accounts = list(authenticated_accounts)  # type: ignore[name-defined]
+        except NameError as e:
+            raise NameError(
+                "No `account_ids` provided and global `authenticated_accounts` is not defined."
+            ) from e
+
     contacts = []
-    for index, row in df.iterrows():
+    for i, (_, row) in enumerate(df.iterrows()):  # i = row order (0..n-1)
         sent_by = None
         if normalized_accounts:
-            sent_by = normalized_accounts[index % len(normalized_accounts)]
+            sent_by = normalized_accounts[i % len(normalized_accounts)]
 
-        contacts.append({
-            "phone": normalize_phone_br(row["Telefone"]),
-            "message": message,
-            "delay": 30000,
-            "sent": False,
-            "sentBy": sent_by,
-            "sentAt": None
-        })
+        contacts.append(
+            {
+                "phone": normalize_phone_br(row["Telefone"]),
+                "message": message,
+                "delay": 30000,
+                "sent": False,
+                "sentBy": sent_by,
+                "sentAt": None,
+            }
+        )
 
     out = Path(output_path)
+    # Ensure parent directory exists (helps when output_path includes folders)
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    # This will create the file if it doesn't exist, or overwrite if it does
     out.write_text(json.dumps(contacts, ensure_ascii=False, indent=2), encoding="utf-8")
     return str(out)
 
@@ -357,13 +371,16 @@ def coordinator_loop():
 
     print(f"\n✅ {len(authenticated_accounts)} account(s) authenticated and ready!")
     print(f"📋 Authenticated: {', '.join(authenticated_accounts)}\n")
-
+    if not settings.CONTACT_MESSAGE:
+        print("⚠️  CONTACT_MESSAGE is empty. Message sending is disabled.")
+        return
     global contacts_json_built
     if pending_contacts_df is not None and not contacts_json_built:
         message = settings.CONTACT_MESSAGE
         if not message:
-            print("⚠️  CONTACT_MESSAGE is empty. Contacts will be created with a blank message.")
-        df_to_contacts_json(
+            print("⚠️  CONTACT_MESSAGE is empty. Skipping contacts generation and sending.")
+            return\
+            df_to_contacts_json(
             pending_contacts_df,
             message,
             output_path=CONTACTS_FILE,
@@ -509,7 +526,7 @@ def main():
     print("⏳ Waiting for authentication...\n")
 
     # Give some time for QR codes to appear
-    time.sleep(5)
+    time.sleep(7)
 
     # Start coordinator in a separate thread
     coordinator_thread = threading.Thread(
