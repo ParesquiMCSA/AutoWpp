@@ -36,7 +36,6 @@ const contactsFile = process.argv[3] || 'contacts.json';
 
 // Load contacts from JSON file
 const contactsPath = path.join(__dirname, contactsFile);
-let contacts = [];
 
 // Error reporting configuration
 const ERROR_REPORT_URL = requireEnv('ERROR_REPORT_URL');
@@ -65,27 +64,69 @@ async function reportError(phone) {
     }
 }
 
-try {
-    const contactsData = fs.readFileSync(contactsPath, 'utf8');
-    contacts = JSON.parse(contactsData);
-} catch (error) {
-    console.error(`[${accountId}] ❌ Error loading ${contactsFile}:`, error.message);
-    process.exit(1);
+// Function to safely read contacts.json
+function loadContacts() {
+    try {
+        const contactsData = fs.readFileSync(contactsPath, 'utf8');
+        return JSON.parse(contactsData);
+    } catch (error) {
+        console.error(`[${accountId}] ❌ Error loading ${contactsFile}:`, error.message);
+        throw error;
+    }
 }
 
-function markContactAsSent(phoneNumber) {
-    try {
-        const contactIndex = contacts.findIndex(c => c.phone === phoneNumber);
-        if (contactIndex !== -1) {
-            contacts[contactIndex].sent = true;
-            contacts[contactIndex].sentBy = accountId;
-            contacts[contactIndex].sentAt = new Date().toISOString();
-            fs.writeFileSync(contactsPath, JSON.stringify(contacts, null, 2), 'utf8');
-            console.log(`[${accountId}] 💾 Marked ${phoneNumber} as sent in ${contactsFile}`);
+// Function to safely update a contact's status in the shared file
+function markContactAsSent(phoneNumber, success = true) {
+    const maxRetries = 5;
+    const retryDelay = 100; // ms
+    
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+        try {
+            // Read the latest state
+            const contacts = loadContacts();
+            
+            // Find and update the contact
+            const contactIndex = contacts.findIndex(c => c.phone === phoneNumber);
+            if (contactIndex === -1) {
+                console.error(`[${accountId}] ⚠️  Contact ${phoneNumber} not found in ${contactsFile}`);
+                return false;
+            }
+            
+            // Verify this contact is assigned to this account
+            if (contacts[contactIndex].sentBy !== accountId) {
+                console.error(`[${accountId}] ⚠️  Contact ${phoneNumber} is not assigned to this account (assigned to: ${contacts[contactIndex].sentBy})`);
+                return false;
+            }
+            
+            // Update the contact
+            contacts[contactIndex].sent = success;
+            contacts[contactIndex].sentAt = success ? new Date().toISOString() : null;
+            
+            // Write back atomically
+            const tempPath = contactsPath + '.tmp';
+            fs.writeFileSync(tempPath, JSON.stringify(contacts, null, 2), 'utf8');
+            fs.renameSync(tempPath, contactsPath);
+            
+            console.log(`[${accountId}] 💾 Marked ${phoneNumber} as ${success ? 'sent' : 'failed'} in ${contactsFile}`);
+            return true;
+            
+        } catch (error) {
+            if (attempt === maxRetries - 1) {
+                console.error(`[${accountId}] ❌ Failed to update ${contactsFile} after ${maxRetries} attempts:`, error.message);
+                return false;
+            }
+            // Wait before retrying
+            const jitter = Math.random() * retryDelay;
+            const delay = retryDelay * (attempt + 1) + jitter;
+            console.log(`[${accountId}] ⚠️  Retry ${attempt + 1}/${maxRetries} in ${delay.toFixed(0)}ms...`);
+            // Synchronous sleep
+            const start = Date.now();
+            while (Date.now() - start < delay) {
+                // busy wait
+            }
         }
-    } catch (error) {
-        console.error(`[${accountId}] ⚠️  Failed to update ${contactsFile}:`, error.message);
     }
+    return false;
 }
 
 // Initialize the client with unique clientId
@@ -101,9 +142,23 @@ const client = new Client({
 
 // Function to send messages and exit
 async function sendMessagesAndExit() {
-    const unsentContacts = contacts.filter(c => c.sent === false);
+    // Load contacts and filter for this account only
+    const allContacts = loadContacts();
     
-    for (const contact of unsentContacts) {
+    // Filter for contacts assigned to this account that haven't been sent
+    const myContacts = allContacts.filter(c => 
+        c.sentBy === accountId && c.sent === false
+    );
+    
+    console.log(`[${accountId}] 📊 Found ${myContacts.length} contacts assigned to this account (${allContacts.length} total)`);
+    
+    if (myContacts.length === 0) {
+        console.log(`[${accountId}] ℹ️  No unsent messages assigned to this account`);
+        await client.destroy();
+        process.exit(0);
+    }
+    
+    for (const contact of myContacts) {
         const { phone, message } = contact;
         
         try {
@@ -112,11 +167,12 @@ async function sendMessagesAndExit() {
             console.log(`[${accountId}] 📤 Sending to ${phone}...`);
             await client.sendMessage(chatId, message);
             console.log(`[${accountId}] ✅ Message sent to ${phone}`);
-            markContactAsSent(phone);
+            markContactAsSent(phone, true);
             
         } catch (error) {
             console.error(`[${accountId}] ❌ Error sending to ${phone}:`, error.message);
             await reportError(phone);
+            markContactAsSent(phone, false);
         }
     }
     

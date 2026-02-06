@@ -86,59 +86,53 @@ def df_to_contacts_json(
 ) -> str:
     """
     Create contacts.json from a DataFrame.
-
-    Expects a column named 'Telefone' (Brazil phone numbers).
-    Writes an array of dicts, one per row, matching the provided template.
-    Alternates `sentBy` between authenticated accounts (round-robin by row order).
-
-    Returns the output file path.
+    Alternates `sentBy` between authenticated accounts when provided.
     """
     if "Telefone" not in df.columns:
         raise ValueError("DataFrame must contain a 'Telefone' column.")
 
     def normalize_phone_br(value) -> str:
+        # Keep only digits
         digits = "".join(ch for ch in str(value) if ch.isdigit())
         if not digits:
             return "+55"  # fallback (still valid string)
 
+        # If it already includes country code 55, keep it; else add it
         if digits.startswith("55"):
             return f"+{digits}"
         return f"+55{digits}"
 
-    # Choose accounts: provided list > global authenticated_accounts
-    if account_ids is not None:
-        normalized_accounts: List[str] = list(account_ids)
-    else:
-        try:
-            normalized_accounts = list(authenticated_accounts)  # type: ignore[name-defined]
-        except NameError as e:
-            raise NameError(
-                "No `account_ids` provided and global `authenticated_accounts` is not defined."
-            ) from e
-
+    normalized_accounts: List[str] = list(account_ids or authenticated_accounts)
     contacts = []
-    for i, (_, row) in enumerate(df.iterrows()):  # i = row order (0..n-1)
+    for index, row in df.iterrows():
         sent_by = None
         if normalized_accounts:
-            sent_by = normalized_accounts[i % len(normalized_accounts)]
+            # Alternate between accounts
+            sent_by = normalized_accounts[index % len(normalized_accounts)]
 
-        contacts.append(
-            {
-                "phone": normalize_phone_br(row["Telefone"]),
-                "message": message,
-                "delay": 30000,
-                "sent": False,
-                "sentBy": sent_by,
-                "sentAt": None,
-            }
-        )
+        contacts.append({
+            "phone": normalize_phone_br(row["Telefone"]),
+            "message": message,
+            "delay": 30000,
+            "sent": False,
+            "sentBy": sent_by,
+            "sentAt": None
+        })
 
     out = Path(output_path)
-    # Ensure parent directory exists (helps when output_path includes folders)
-    out.parent.mkdir(parents=True, exist_ok=True)
-
-    # This will create the file if it doesn't exist, or overwrite if it does
     out.write_text(json.dumps(contacts, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"✅ Created {output_path} with {len(contacts)} contacts")
+
+    # Show distribution
+    if normalized_accounts:
+        distribution = {}
+        for contact in contacts:
+            account = contact['sentBy']
+            distribution[account] = distribution.get(account, 0) + 1
+        print(f"📊 Distribution by account:")
+        for acc, count in distribution.items():
+            print(f"   - {acc}: {count} contacts")
+
     return str(out)
 
 
@@ -171,288 +165,87 @@ def save_contacts(contacts):
             print(f"❌ Error saving {CONTACTS_FILE}: {e}")
             return False
 
-def mark_contact_status(phone, account_id, success=True):
-    """Mark a contact as sent or record an error without retrying in the same run."""
-    contacts = load_contacts()
-    updated = False
-
-    for contact in contacts:
-        if contact['phone'] == phone:
-            if success:
-                contact['sent'] = True
-                contact['sentBy'] = account_id
-                contact['sentAt'] = datetime.now().isoformat()
-                print(f"💾 Marked {phone} as sent by {account_id}")
-            else:
-                contact['sent'] = False  # Keep unsent to allow retry on next run
-                contact['sentBy'] = account_id
-                contact['sentAt'] = f"ERROR_{datetime.now().isoformat()}"
-                print(f"⚠️  Marked {phone} as failed by {account_id}")
-            updated = True
-            break
-
-    if updated:
-        save_contacts(contacts)
-
-    return updated
-
-def get_next_account():
-    """Select next authenticated account using random selection with max 3 consecutive rule"""
-    authenticated = [acc for acc in ACCOUNTS if acc['authenticated']]
-    multiple_accounts = len(ACCOUNTS) > 1 and len(authenticated) > 1
-
-    if not multiple_accounts:
-        return authenticated[0] if authenticated else None
-
-    # Only use authenticated accounts
-    available = [acc for acc in authenticated if acc['consecutive_uses'] < MAX_CONSECUTIVE_USES]
-
-    if not available:
-        # Reset all counters if all accounts hit the limit
-        for acc in ACCOUNTS:
-            if acc['authenticated']:
-                acc['consecutive_uses'] = 0
-        available = authenticated
-
-    if not available:
-        return None
-
-    # Randomly select from available accounts
-    selected = random.choice(available)
-
-    # Update consecutive use counters
-    for acc in ACCOUNTS:
-        if acc['id'] == selected['id']:
-            acc['consecutive_uses'] += 1
-        else:
-            acc['consecutive_uses'] = 0
-
-    return selected
-
-def send_message_via_account(account, contact):
-    """Send a message using a specific account"""
-    phone = contact['phone']
-    message = contact['message']
-
-    print(f"\n📤 [{account['name']}] Sending to {phone}...")
-
-    # Create temporary contacts file with just this one contact
-    temp_contacts_file = f"temp_{account['id']}_{int(time.time())}.json"
-
+def start_bot(account):
+    """Start a bot instance for an account (Persistent Mode)"""
     try:
-        temp_contact = [{
-            "phone": phone,
-            "message": message,
-            "delay": 0,
-            "sent": False
-        }]
-
-        with open(temp_contacts_file, 'w', encoding='utf-8') as f:
-            json.dump(temp_contact, f, indent=2, ensure_ascii=False)
-
-        # Run sender.js to send the message
-        env = os.environ.copy()
-        env['PYTHONIOENCODING'] = 'utf-8'
-        env['NODE_NO_WARNINGS'] = '1'
+        # We start in persistent mode. 'index.js' will read contacts.json on ready.
+        cmd = ['node', 'index.js', account['id'], CONTACTS_FILE]
 
         process = subprocess.Popen(
-            ['node', 'sender.js', account['id'], temp_contacts_file],
+            cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            stdin=subprocess.PIPE,
-            text=True,
+            bufsize=1,
+            universal_newlines=True,
             encoding='utf-8',
-            errors='replace',
-            env=env
+            errors='replace'
         )
 
-        # Wait for completion (with timeout)
-        try:
-            stdout, _ = process.communicate(timeout=30)
-
-            if process.returncode == 0:
-                print(f"✅ [{account['name']}] Message sent to {phone}")
-                mark_contact_status(phone, account['id'], success=True)
-                return True
-            else:
-                print(f"❌ [{account['name']}] Failed to send to {phone}")
-                mark_contact_status(phone, account['id'], success=False)
-                return False
-
-        except subprocess.TimeoutExpired:
-            print(f"⚠️  [{account['name']}] Timeout sending to {phone}")
-            process.kill()
-            mark_contact_status(phone, account['id'], success=False)
-            return False
+        return process
 
     except Exception as e:
-        print(f"❌ [{account['name']}] Error sending to {phone}: {e}")
-        mark_contact_status(phone, account['id'], success=False)
-        return False
-    finally:
-        # Clean up temp file
-        try:
-            if os.path.exists(temp_contacts_file):
-                os.remove(temp_contacts_file)
-        except:
-            pass
+        print(f"❌ Error starting bot for {account['name']}: {e}")
+        return None
 
 def monitor_authentication(process, account):
     """Monitor process output for authentication status"""
     try:
         for line in iter(process.stdout.readline, ''):
             if line:
-                print(line, end='', flush=True)
+                print(f"[{account['name']}] {line.rstrip()}")
 
                 # Check for authentication success
                 if 'Authenticated successfully' in line or 'Client is ready' in line:
-                    account['authenticated'] = True
-                    account['ready'] = True
-                    if account['id'] not in authenticated_accounts:
-                        authenticated_accounts.append(account['id'])
-                    print(f"\n✅ {account['name']} is now AUTHENTICATED and READY!\n")
+                    if not account['authenticated']:
+                        account['authenticated'] = True
+                        account['ready'] = True
+                        if account['id'] not in authenticated_accounts:
+                            authenticated_accounts.append(account['id'])
+                        print(f"\n✅ {account['name']} is now authenticated and ready!\n")
 
-                # Check for authentication failure
-                if 'Authentication failed' in line or 'auth_failure' in line:
-                    account['authenticated'] = False
-                    account['ready'] = False
-                    print(f"\n❌ {account['name']} authentication FAILED!\n")
-            else:
-                break
+                # Check for QR code generation
+                if 'QR RECEIVED' in line or 'Scan this QR code' in line:
+                    print(f"\n📱 {account['name']}: Please scan the QR code above\n")
+
     except Exception as e:
-        print(f"[{account['name']}] Error reading output: {e}")
+        # Process likely died
+        pass
 
-def start_bot(account):
-    """Start a single WhatsApp bot instance"""
-    try:
-        env = os.environ.copy()
-        env['PYTHONIOENCODING'] = 'utf-8'
-        env['NODE_NO_WARNINGS'] = '1'
+def wait_for_all_authentication():
+    """
+    Wait until ALL started accounts are authenticated.
+    Fixes the issue where the Orchestrator moves on too fast.
+    """
+    print("\n⏳ Waiting for ALL accounts to authenticate...")
 
-        # Start the Node.js process with unified contacts.json
-        process = subprocess.Popen(
-            ['node', 'index.js', account['id'], CONTACTS_FILE],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            stdin=subprocess.PIPE,
-            text=True,
-            bufsize=1,
-            universal_newlines=True,
-            encoding='utf-8',
-            errors='replace',
-            env=env
-        )
+    # Count how many accounts we actually started
+    started_accounts = [acc for acc in ACCOUNTS if acc['process'] is not None]
+    total_to_wait = len(started_accounts)
 
-        return process
+    if total_to_wait == 0:
+        return False
 
-    except FileNotFoundError:
-        print(f"❌ Error: Node.js not found for {account['name']}")
-        return None
-    except Exception as e:
-        print(f"❌ Error starting {account['name']}: {e}")
-        return None
+    timeout = 120  # 2 minutes
+    start_time = time.time()
 
-def coordinator_loop():
-    """Main coordinator loop - sends messages using random account selection"""
-    print("\n" + "=" * 60)
-    print("🚀 STARTING SMART COORDINATOR")
-    print("=" * 60)
+    while time.time() - start_time < timeout:
+        # Count how many are currently authenticated
+        current_auth_count = sum(1 for acc in started_accounts if acc['authenticated'])
 
-    # Wait for at least one account to authenticate
-    print("\n⏳ Waiting for accounts to authenticate...")
-    wait_time = 0
-    while not authenticated_accounts and wait_time < 120:
-        time.sleep(2)
-        wait_time += 2
+        if current_auth_count == total_to_wait:
+            print(f"\n✅ All {total_to_wait} account(s) authenticated!")
+            return True
 
-    if not authenticated_accounts:
-        print("\n❌ No accounts authenticated after 2 minutes. Cannot start coordinator.")
-        return
+        # Optional: Print progress
+        # sys.stdout.write(f"\rProgress: {current_auth_count}/{total_to_wait} authenticated")
+        # sys.stdout.flush()
 
-    print(f"\n✅ {len(authenticated_accounts)} account(s) authenticated and ready!")
-    print(f"📋 Authenticated: {', '.join(authenticated_accounts)}\n")
-    if not settings.CONTACT_MESSAGE:
-        print("⚠️  CONTACT_MESSAGE is empty. Message sending is disabled.")
-        return
-    global contacts_json_built
-    if pending_contacts_df is not None and not contacts_json_built:
-        message = settings.CONTACT_MESSAGE
-        if not message:
-            print("⚠️  CONTACT_MESSAGE is empty. Skipping contacts generation and sending.")
-            return\
-            df_to_contacts_json(
-            pending_contacts_df,
-            message,
-            output_path=CONTACTS_FILE,
-            account_ids=authenticated_accounts
-        )
-        contacts_json_built = True
-        print(f"✅ {CONTACTS_FILE} generated from database query.")
+        time.sleep(1)
 
-    failed_this_run = set()
-
-    # Load contacts and start sending
-    while True:
-        contacts = load_contacts()
-        unsent = [
-            c for c in contacts
-            if not c.get('sent', False) and c.get('phone') not in failed_this_run
-        ]
-
-        if not unsent:
-            pending = [c for c in contacts if not c.get('sent', False)]
-            if pending:
-                print("\n⚠️  Some contacts failed in this run and will be retried next start.")
-                print("ℹ️  Restart the orchestrator to retry failed contacts.")
-            else:
-                print("\n✅ All contacts have been messaged!")
-                print("ℹ️  Coordinator will keep bots running for auto-replies")
-                print("ℹ️  Add more contacts or reset 'sent' flags to send more messages\n")
-            break
-
-        # Get next unsent contact
-        contact = unsent[0]
-
-        assigned_account_id = contact.get('sentBy')
-        account = None
-        if assigned_account_id:
-            account = next(
-                (acc for acc in ACCOUNTS if acc['id'] == assigned_account_id and acc['authenticated']),
-                None
-            )
-            if not account:
-                print(
-                    f"\n⚠️  Contact {contact.get('phone')} is assigned to "
-                    f"{assigned_account_id}, but it is not authenticated. Waiting..."
-                )
-                time.sleep(5)
-                continue
-        else:
-            account = get_next_account()
-            if not account:
-                print("\n⚠️  No authenticated accounts available. Waiting...")
-                time.sleep(5)
-                continue
-
-        # Send the message
-        success = send_message_via_account(account, contact)
-
-        if success:
-            # Respect the delay
-            delay = contact.get('delay', 2000) / 1000
-            if len(unsent) > 1:
-                print(f"⏳ Waiting {delay}s before next message...\n")
-                time.sleep(delay)
-        else:
-            # On failure, wait a bit before retrying
-            failed_this_run.add(contact.get('phone'))
-            time.sleep(2)
-
-    print("\n" + "=" * 60)
-    print("📊 COORDINATOR COMPLETED")
-    print("=" * 60)
-    print("ℹ️  Bots will continue running for auto-replies")
-    print("ℹ️  Type 'terminate' to stop all bots\n")
+    print(f"\n⚠️ Timeout waiting. {current_auth_count}/{total_to_wait} authenticated.")
+    # Proceed anyway with what we have? Or exit.
+    # Let's return False if not all authed, or True if at least one.
+    return current_auth_count > 0
 
 def check_files():
     """Check if required files exist"""
@@ -463,78 +256,73 @@ def check_files():
         return False
     print("✅ index.js found")
 
-    if not os.path.exists('sender.js'):
-        print("❌ Error: sender.js not found!")
-        return False
-    print("✅ sender.js found")
-
-    if not os.path.exists(CONTACTS_FILE):
-        print(f"⚠️  Warning: {CONTACTS_FILE} not found - will need contacts to send messages")
-    else:
-        contacts = load_contacts()
-        unsent = [c for c in contacts if not c.get('sent', False)]
-        print(f"✅ {CONTACTS_FILE} found ({len(unsent)} unsent contacts)")
-
     print()
     return True
 
-def main():
-    """Main orchestrator function"""
-    print_header()
+def build_contacts_json_final():
+    """Generate contacts.json using authenticated accounts list"""
+    global pending_contacts_df, contacts_json_built
 
-    global pending_contacts_df
-    pending_contacts_df = fetch_negociador_df()
+    if contacts_json_built:
+        return True
 
-    if not check_files():
-        sys.exit(1)
+    print("\n📝 Generating contacts.json...")
 
-    print("🚀 Starting WhatsApp Bots for Authentication...")
-    print("=" * 60)
+    if pending_contacts_df is None or pending_contacts_df.empty:
+        print("⚠️  No contacts data available (pending_contacts_df is empty).")
+        return False
 
-    processes = []
+    # Get authenticated IDs
+    auth_ids = [acc['id'] for acc in ACCOUNTS if acc['authenticated']]
 
-    # Start all bot instances
-    for account in ACCOUNTS:
-        print(f"\n🔄 Starting {account['name']}...")
-        process = start_bot(account)
+    if not auth_ids:
+        print("❌ No authenticated accounts found. Cannot assign contacts.")
+        return False
 
-        if process:
-            account['process'] = process
-            processes.append(account)
+    print(f"   Found {len(pending_contacts_df)} contacts in DB.")
+    print(f"   Assigning to {len(auth_ids)} authenticated account(s).")
 
-            # Start thread to monitor authentication
-            monitor_thread = threading.Thread(
-                target=monitor_authentication,
-                args=(process, account),
-                daemon=True
-            )
-            monitor_thread.start()
+    default_message = getattr(settings, 'DEFAULT_MESSAGE', "Olá! Temos uma proposta para você.")
 
-            print(f"✅ {account['name']} started (PID: {process.pid})")
-            time.sleep(2)
-        else:
-            print(f"❌ Failed to start {account['name']}")
+    try:
+        df_to_contacts_json(
+            df=pending_contacts_df,
+            message=default_message,
+            output_path=CONTACTS_FILE,
+            account_ids=auth_ids
+        )
+        contacts_json_built = True
+        print(f"✅ {CONTACTS_FILE} generated successfully!")
+        return True
+    except Exception as e:
+        print(f"❌ Error generating contacts.json: {e}")
+        return False
 
-    if not processes:
-        print("\n❌ No bots started. Exiting...")
-        sys.exit(1)
+def stop_bots(accounts):
+    """Gracefully stop all bot processes"""
+    print("\n🛑 Stopping all bots...")
+    for account in accounts:
+        if account['process'] and account['process'].poll() is None:
+            print(f"   Stopping {account['name']}...")
+            account['process'].terminate()
 
-    print("\n" + "=" * 60)
-    print(f"✅ {len(processes)} bot(s) started!")
-    print("=" * 60)
-    print("\n📱 Please scan QR codes for each account...")
-    print("⏳ Waiting for authentication...\n")
+    print("   Waiting for processes to shut down...")
+    time.sleep(3) # Wait for graceful exit
 
-    # Give some time for QR codes to appear
-    time.sleep(7)
+    # Force kill if necessary
+    for account in accounts:
+        if account['process'] and account['process'].poll() is None:
+            print(f"   Force killing {account['name']}...")
+            account['process'].kill()
 
-    # Start coordinator in a separate thread
-    coordinator_thread = threading.Thread(
-        target=coordinator_loop,
-        daemon=True
-    )
-    coordinator_thread.start()
+    # Reset process handles
+    for account in accounts:
+        account['process'] = None
 
+    print("✅ All bots stopped.")
+
+def monitor_and_commands(accounts):
+    """Main monitoring loop handling user input"""
     print("\n📝 Commands:")
     print("  • 'status'    - Show account status")
     print("  • 'stats'     - Show sending statistics")
@@ -542,42 +330,26 @@ def main():
     print("=" * 60)
     print()
 
-    # Monitor and wait for commands
     try:
         while True:
             # Check if any process has died
-            for account in processes:
-                if account['process'].poll() is not None:
+            for account in accounts:
+                if account['process'] and account['process'].poll() is not None:
                     print(f"\n⚠️  {account['name']} has stopped unexpectedly!")
-                    account['authenticated'] = False
-                    account['ready'] = False
 
             try:
                 user_input = input().strip().lower()
 
                 if user_input == 'terminate':
-                    print("\n🛑 Terminating all bots...")
-                    for account in processes:
-                        print(f"   Stopping {account['name']}...")
-                        account['process'].terminate()
-
-                    print("   Waiting for processes to shut down...")
-                    time.sleep(2)
-
-                    for account in processes:
-                        if account['process'].poll() is None:
-                            print(f"   Force killing {account['name']}...")
-                            account['process'].kill()
-
-                    print("✅ All bots terminated!")
+                    stop_bots(accounts)
                     break
 
                 elif user_input == 'status':
                     print("\n📊 Account Status:")
                     print("─" * 60)
-                    for account in processes:
+                    for account in accounts:
                         auth_status = "🟢 Authenticated" if account['authenticated'] else "🔴 Not Authenticated"
-                        running = "Running" if account['process'].poll() is None else "Stopped"
+                        running = "Running" if (account['process'] and account['process'].poll() is None) else "Stopped"
                         consecutive = account['consecutive_uses']
                         print(f"  {account['name']}: {auth_status} | {running} | Consecutive: {consecutive}/3")
                     print("─" * 60)
@@ -635,13 +407,108 @@ def main():
 
     except KeyboardInterrupt:
         print("\n\n⚠️  Ctrl+C detected. Terminating all bots...")
-        for account in processes:
-            account['process'].terminate()
-        time.sleep(2)
-        for account in processes:
-            if account['process'].poll() is None:
-                account['process'].kill()
-        print("✅ All bots terminated!")
+        stop_bots(accounts)
+
+    print("✅ All bots terminated!")
+
+def main():
+    """Main orchestrator function"""
+    print_header()
+
+    global pending_contacts_df
+    pending_contacts_df = fetch_negociador_df()
+
+    if not check_files():
+        sys.exit(1)
+
+    # --- PHASE 1: AUTHENTICATION ---
+    print("\n" + "=" * 60)
+    print("🚀 PHASE 1: Starting WhatsApp Bots for Authentication")
+    print("=" * 60)
+
+    # CRITICAL FIX: Clear contacts.json to an empty list.
+    # This prevents bots from starting to send messages from a previous run
+    # before we have calculated the new distribution.
+    print("\n🧹 Clearing contacts.json to prevent premature sending...")
+    save_contacts([])
+
+    # Start all bots
+    processes = []
+    for idx, account in enumerate(ACCOUNTS):
+        print(f"\n🔄 Starting {account['name']}...")
+        process = start_bot(account)
+        if process:
+            account['process'] = process
+            processes.append(account)
+
+            # Start thread to monitor authentication
+            monitor_thread = threading.Thread(
+                target=monitor_authentication,
+                args=(process, account),
+                daemon=True
+            )
+            monitor_thread.start()
+
+            print(f"✅ {account['name']} started (PID: {process.pid})")
+
+            # Add 4 second delay between accounts to prevent browser conflicts
+            if idx < len(ACCOUNTS) - 1:
+                print(f"⏳ Waiting 4 seconds before starting next account...")
+                time.sleep(4)
+
+    if not processes:
+        print("\n❌ No bots started. Exiting...")
+        sys.exit(1)
+
+    # Wait for ALL Auth
+    # Previously we waited for 'any', which left account_2 behind.
+    if not wait_for_all_authentication():
+        print("❌ Critical failure waiting for authentication. Exiting...")
+        stop_bots(processes)
+        sys.exit(1)
+
+    # --- PHASE 2: PREPARATION ---
+    print("\n" + "=" * 60)
+    print("🛠️  PHASE 2: Generating Contacts Configuration")
+    print("=" * 60)
+
+    # Stop bots to release locks/connections before generating new config
+    stop_bots(processes)
+
+    # Generate Contacts with proper sentBy assignment
+    if not build_contacts_json_final():
+        print("❌ Failed to build contacts.json. Exiting.")
+        sys.exit(1)
+
+    # --- PHASE 3: SENDING ---
+    print("\n" + "=" * 60)
+    print("🚀 PHASE 3: Starting Bots for Sending Messages")
+    print("=" * 60)
+
+    # Restart bots (They will auto-auth because session is saved, then read new contacts.json)
+    for idx, account in enumerate(ACCOUNTS):
+        print(f"\n🔄 Restarting {account['name']}...")
+        process = start_bot(account)
+        if process:
+            account['process'] = process
+            monitor_thread = threading.Thread(
+                target=monitor_authentication,
+                args=(process, account),
+                daemon=True
+            )
+            monitor_thread.start()
+
+            print(f"✅ {account['name']} restarted")
+
+            if idx < len(ACCOUNTS) - 1:
+                time.sleep(4)
+        else:
+            print(f"❌ Failed to restart {account['name']}")
+
+    print("\n✅ Bots are running and processing messages...")
+
+    # Run Monitor Loop
+    monitor_and_commands(ACCOUNTS)
 
     print("\n👋 Orchestrator shutting down...")
 

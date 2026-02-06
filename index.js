@@ -35,13 +35,17 @@ loadEnv();
 // Get account info from command line arguments
 const accountId = process.argv[2] || 'default';
 const contactsFile = process.argv[3] || 'contacts.json';
+const mode = process.argv[4] || 'persistent'; // 'persistent' or 'oneshot'
+
+const isOneShotMode = mode === 'oneshot';
 
 console.log(`╔════════════════════════════════════════════╗`);
+console.log(`║  Mode:       ${isOneShotMode ? 'ONE-SHOT (send and exit)' : 'PERSISTENT (with auto-reply)'.padEnd(30)} ║`);
 console.log(`║  Account ID: ${accountId.padEnd(29)} ║`);
 console.log(`║  Contacts:   ${contactsFile.padEnd(29)} ║`);
 console.log(`╚════════════════════════════════════════════╝\n`);
 
-// Load contacts from JSON file
+// Load contacts
 const contactsPath = path.join(__dirname, contactsFile);
 let contacts = [];
 
@@ -56,10 +60,8 @@ const ERROR_REPORT_AUTH_TOKEN = requireEnv('ERROR_REPORT_AUTH_TOKEN');
 const ERROR_REPORT_HEADER_KEY = requireEnv('ERROR_REPORT_HEADER_KEY');
 const ERROR_REPORT_HEADER_VALUE = requireEnv('ERROR_REPORT_HEADER_VALUE');
 
-// Function to report error to endpoint
 async function reportError(phone) {
-    const today = new Date().toISOString().split('T')[0]; // Format: YYYY-MM-DD
-    
+    const today = new Date().toISOString().split('T')[0];
     try {
         await axios.post(ERROR_REPORT_URL, {
             data: phone,
@@ -71,29 +73,61 @@ async function reportError(phone) {
                 'Content-Type': 'application/json'
             }
         });
-        console.log(`[${accountId}] 📡 Error reported to endpoint for ${phone}`);
+        console.log(`[${accountId}] 📡 Error reported for ${phone}`);
     } catch (reportError) {
-        console.error(`[${accountId}] ⚠️  Failed to report error to endpoint:`, reportError.message);
+        console.error(`[${accountId}] ⚠️  Failed to report error:`, reportError.message);
     }
 }
 
-// Function to update contact's 'sent' status in the JSON file
-function markContactAsSent(phoneNumber) {
-    try {
-        // Find the contact and update sent status
-        const contactIndex = contacts.findIndex(c => c.phone === phoneNumber);
-        if (contactIndex !== -1) {
-            contacts[contactIndex].sent = true;
-            contacts[contactIndex].sentBy = accountId;
-            contacts[contactIndex].sentAt = new Date().toISOString();
-            
-            // Write updated contacts back to file
-            fs.writeFileSync(contactsPath, JSON.stringify(contacts, null, 2), 'utf8');
-            console.log(`[${accountId}] 💾 Marked ${phoneNumber} as sent in ${contactsFile}`);
+function loadContacts() {
+    const maxRetries = 3;
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+        try {
+            const contactsData = fs.readFileSync(contactsPath, 'utf8');
+            return JSON.parse(contactsData);
+        } catch (error) {
+            if (attempt === maxRetries - 1) throw error;
+            const delay = 100 * (attempt + 1);
+            const start = Date.now();
+            while (Date.now() - start < delay) {}
         }
-    } catch (error) {
-        console.error(`[${accountId}] ⚠️  Failed to update ${contactsFile}:`, error.message);
     }
+}
+
+function markContactAsSent(phoneNumber, success = true) {
+    const maxRetries = 5;
+    const retryDelay = 100;
+
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+        try {
+            const currentContacts = loadContacts();
+            const contactIndex = currentContacts.findIndex(c => c.phone === phoneNumber);
+            if (contactIndex === -1) return false;
+
+            // Verify assignment
+            if (currentContacts[contactIndex].sentBy && currentContacts[contactIndex].sentBy !== accountId) {
+                console.error(`[${accountId}] ⚠️  Contact ${phoneNumber} is assigned to ${currentContacts[contactIndex].sentBy}, skipping.`);
+                return false;
+            }
+
+            currentContacts[contactIndex].sent = success;
+            currentContacts[contactIndex].sentBy = accountId;
+            currentContacts[contactIndex].sentAt = success ? new Date().toISOString() : null;
+
+            const tempPath = contactsPath + '.tmp';
+            fs.writeFileSync(tempPath, JSON.stringify(currentContacts, null, 2), 'utf8');
+            fs.renameSync(tempPath, contactsPath);
+
+            return true;
+        } catch (error) {
+            if (attempt === maxRetries - 1) return false;
+            const jitter = Math.random() * retryDelay;
+            const delay = retryDelay * (attempt + 1) + jitter;
+            const start = Date.now();
+            while (Date.now() - start < delay) {}
+        }
+    }
+    return false;
 }
 
 function randomBetween(min, max) {
@@ -130,10 +164,10 @@ async function appendLeadToSheet(phoneNumber, cpf, email) {
                 values: [[phoneNumber, cpf, email, timestamp]]
             }
         });
-        console.log(`[${accountId}] ✅ Lead appended to Google Sheets for ${phoneNumber}`);
+        console.log(`[${accountId}] ✅ Lead appended for ${phoneNumber}`);
         await reportSuccess(phoneNumber, cpf, timestamp);
     } catch (error) {
-        console.error(`[${accountId}] ❌ Failed to append lead to Google Sheets:`, error.message);
+        console.error(`[${accountId}] ❌ Failed to append lead:`, error.message);
     }
 }
 
@@ -153,17 +187,15 @@ async function reportSuccess(phoneNumber, cpf, timestamp) {
                 'Content-Type': 'application/json'
             }
         });
-        console.log(`[${accountId}] 📡 Success reported to endpoint for ${phoneNumber}`);
+        console.log(`[${accountId}] 📡 Success reported for ${phoneNumber}`);
     } catch (error) {
-        console.error(`[${accountId}] ⚠️  Failed to report success to endpoint:`, error.message);
+        console.error(`[${accountId}] ⚠️  Failed to report success:`, error.message);
     }
 }
 
 async function resolvePhoneNumber(client, from) {
     if (!from) return null;
-    if (from.endsWith('@c.us')) {
-        return from.replace('@c.us', '');
-    }
+    if (from.endsWith('@c.us')) return from.replace('@c.us', '');
     if (from.endsWith('@lid')) {
         const results = await client.getContactLidAndPhone([from]);
         const phone = results?.[0]?.pn ?? null;
@@ -173,230 +205,185 @@ async function resolvePhoneNumber(client, from) {
 }
 
 try {
-    const contactsData = fs.readFileSync(contactsPath, 'utf8');
-    contacts = JSON.parse(contactsData);
+    contacts = loadContacts();
     console.log(`[${accountId}] 📋 Loaded ${contacts.length} contacts from ${contactsFile}`);
 } catch (error) {
     console.error(`[${accountId}] ❌ Error loading ${contactsFile}:`, error.message);
-    process.exit(1);
+    if (isOneShotMode) process.exit(1);
+    // If persistent mode, we continue with empty contacts to allow waiting for file generation
+    contacts = [];
 }
 
-// Initialize the client with unique clientId for separate authentication
 const client = new Client({
-    authStrategy: new LocalAuth({ 
-        clientId: accountId  // This creates .ww-session-{accountId}/
-    }),
+    authStrategy: new LocalAuth({ clientId: accountId }),
     puppeteer: {
         headless: true,
         args: ['--no-sandbox', '--disable-setuid-sandbox']
     }
 });
 
-// Event: Generate QR code
 client.on('qr', (qr) => {
     console.log(`\n[${accountId}] 📱 Scan this QR code with WhatsApp:`);
-    console.log(`[${accountId}] Open WhatsApp > Settings > Linked Devices > Link a Device\n`);
     qrcode.generate(qr, { small: true });
 });
 
-// Function to send messages to all contacts
-async function sendMessagesToContacts() {
+async function sendMessagesAndExit() {
+    console.log(`\n[${accountId}] 🚀 Starting one-shot sender...\n`);
+    const currentContacts = loadContacts();
+    const myUnsentContacts = currentContacts.filter(c => {
+        if (c.sentBy) return c.sentBy === accountId && c.sent === false;
+        return c.sent === false;
+    });
+
+    if (myUnsentContacts.length === 0) {
+        console.log(`[${accountId}] ℹ️  No messages assigned. Exiting.`);
+        await client.destroy();
+        process.exit(0);
+    }
+
+    for (const contact of myUnsentContacts) {
+        try {
+            const chatId = contact.phone.replace('+', '') + '@c.us';
+            console.log(`[${accountId}] 📤 Sending to ${contact.phone}...`);
+            await client.sendMessage(chatId, contact.message);
+            markContactAsSent(contact.phone, true);
+        } catch (error) {
+            console.error(`[${accountId}] ❌ Error sending to ${contact.phone}:`, error.message);
+            await reportError(contact.phone);
+            markContactAsSent(contact.phone, false);
+        }
+    }
+    await client.destroy();
+    process.exit(0);
+}
+
+async function sendMessagesAndStayAlive() {
     console.log(`\n[${accountId}] 🚀 Starting to send messages...\n`);
-    
-    // Filter only unsent contacts
-    const unsentContacts = contacts.filter(c => c.sent === false);
-    
-    if (unsentContacts.length === 0) {
-        console.log(`[${accountId}] ℹ️  No unsent messages. All contacts have already been messaged.`);
-        console.log(`[${accountId}] ℹ️  To reset, set "sent": false in ${contactsFile}\n`);
+    const currentContacts = loadContacts();
+
+    // Strict filtering: Only send if assigned to THIS account
+    const myUnsentContacts = currentContacts.filter(c => {
+        if (c.sentBy) {
+            return c.sentBy === accountId && c.sent === false;
+        }
+        return false; // If no sentBy, do not send (prevents double sending)
+    });
+
+    if (myUnsentContacts.length === 0) {
+        console.log(`[${accountId}] ℹ️  No unsent messages assigned to this account.`);
+        console.log(`[${accountId}] Bot is running and will auto-reply to incoming messages\n`);
         return;
     }
-    
-    console.log(`[${accountId}] 📊 Found ${unsentContacts.length} unsent contact(s) out of ${contacts.length} total\n`);
-    
-    for (let i = 0; i < unsentContacts.length; i++) {
-        const contact = unsentContacts[i];
-        const { phone, message, delay } = contact;
-        
+
+    console.log(`[${accountId}] 📊 Found ${myUnsentContacts.length} unsent contact(s) assigned to this account\n`);
+
+    for (let i = 0; i < myUnsentContacts.length; i++) {
+        const contact = myUnsentContacts[i];
         try {
-            // Format phone number for WhatsApp (remove + and add @c.us)
-            const chatId = phone.replace('+', '') + '@c.us';
-            
-            console.log(`[${accountId}] 📤 Sending to ${phone}...`);
-            await client.sendMessage(chatId, message);
-            console.log(`[${accountId}] ✅ Message sent to ${phone}`);
-            
-            // Mark as sent in the JSON file
-            markContactAsSent(phone);
-            
-            // Wait for the contact's specified delay before sending next message
-            if (i < unsentContacts.length - 1 && delay) {
+            const chatId = contact.phone.replace('+', '') + '@c.us';
+            console.log(`[${accountId}] 📤 Sending to ${contact.phone}...`);
+            await client.sendMessage(chatId, contact.message);
+            markContactAsSent(contact.phone, true);
+
+            if (i < myUnsentContacts.length - 1) {
+                const delay = contact.delay || 2000;
                 const jitter = Math.floor(randomBetween(1000, 5000));
-                const totalDelay = delay + jitter;
-                console.log(`[${accountId}] ⏳ Waiting ${totalDelay}ms before next message...\n`);
-                await new Promise(resolve => setTimeout(resolve, totalDelay));
-            } else if (i < unsentContacts.length - 1) {
-                // Default delay if not specified
-                const baseDelay = 2000;
-                const jitter = Math.floor(randomBetween(1000, 5000));
-                const totalDelay = baseDelay + jitter;
-                console.log(`[${accountId}] ⏳ Waiting ${totalDelay}ms (default + random) before next message...\n`);
-                await new Promise(resolve => setTimeout(resolve, totalDelay));
+                await new Promise(resolve => setTimeout(resolve, delay + jitter));
             }
-            
         } catch (error) {
-            console.error(`[${accountId}] ❌ Error sending to ${phone}:`, error.message);
-            // Report error to endpoint
-            await reportError(phone);
-            // Note: We don't mark as sent if there was an error
+            console.error(`[${accountId}] ❌ Error sending to ${contact.phone}:`, error.message);
+            await reportError(contact.phone);
+            markContactAsSent(contact.phone, false);
         }
     }
-    
-    console.log(`\n[${accountId}] ✅ All unsent messages sent!`);
-    console.log(`[${accountId}] Bot is running and will auto-reply to incoming messages`);
-    console.log(`[${accountId}] Press Ctrl+C to exit\n`);
+    console.log(`\n[${accountId}] ✅ All assigned messages sent! Listening for replies...\n`);
 }
 
-// Event: Client is ready
 client.on('ready', async () => {
     console.log(`\n[${accountId}] ✅ Client is ready!\n`);
-    
     try {
-        // Send messages to all contacts
-        await sendMessagesToContacts();
-        
+        if (isOneShotMode) await sendMessagesAndExit();
+        else await sendMessagesAndStayAlive();
     } catch (error) {
-        console.error(`[${accountId}] ❌ Error:`, error);
+        console.error(`[${accountId}] ❌ Error in ready handler:`, error);
+        if (isOneShotMode) process.exit(1);
     }
 });
 
-// Event: Authentication successful
-client.on('authenticated', () => {
-    console.log(`[${accountId}] ✅ Authenticated successfully!`);
-});
+client.on('authenticated', () => console.log(`[${accountId}] ✅ Authenticated successfully!`));
 
-// Event: Authentication failure
-client.on('auth_failure', (msg) => {
-    console.error(`[${accountId}] ❌ Authentication failed:`, msg);
-});
+client.on('disconnected', (reason) => console.log(`[${accountId}] Disconnected:`, reason));
 
-// Event: Client disconnected
-client.on('disconnected', (reason) => {
-    console.log(`[${accountId}] Disconnected:`, reason);
-});
+if (!isOneShotMode) {
+    const leadCapture = new Map();
+    const MAX_WRONG_ANSWERS = 3;
 
-// Auto-reply to any incoming message
-const leadCapture = new Map();
-const MAX_WRONG_ANSWERS = 3;
-
-function getLeadState(chatId) {
-    if (!leadCapture.has(chatId)) {
-        leadCapture.set(chatId, {
-            step: 'cpf',
-            cpf: null,
-            email: null,
-            invalidCpfAttempts: 0,
-            postCompletionReplies: 0,
-            blocked: false
-        });
-    }
-    return leadCapture.get(chatId);
-}
-
-function extractDocumentNumber(value) {
-    if (!value) return null;
-    const digits = value.replace(/\D/g, '');
-    if (digits.length === 11 || digits.length === 14) {
-        return digits;
-    }
-    return null;
-}
-
-function isValidEmailFormat(value) {
-    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
-}
-
-client.on('message_create', async (message) => {
-    // Only reply to messages we receive (not messages we send)
-    if (!message.fromMe && message.body) {
-        try {
-            console.log(`[${accountId}] 📨 Received message from ${message.from}: "${message.body}"`);
-            const replyDelayMs = randomBetween(1000, 3000);
-            await new Promise(resolve => setTimeout(resolve, replyDelayMs));
-            const state = getLeadState(message.from);
-            const text = message.body.trim();
-
-            if (state.blocked) {
-                console.log(`[${accountId}] 🛑 Ignoring ${message.from} due to max wrong answers reached.`);
-                return;
-            }
-
-            if (state.step === 'cpf') {
-                const documentNumber = extractDocumentNumber(text);
-                if (!state.cpf && documentNumber) {
-                    state.cpf = documentNumber;
-                    state.step = 'email';
-                    await client.sendMessage(message.from, 'Obrigado! Agora informe seu e-mail, por gentiliza:');
-                    console.log(`[${accountId}] ✅ CPF received from ${message.from}`);
-                } else if (!state.cpf) {
-                    state.invalidCpfAttempts += 1;
-                    if (state.invalidCpfAttempts > MAX_WRONG_ANSWERS) {
-                        state.blocked = true;
-                        console.log(`[${accountId}] 🛑 Max CPF attempts exceeded for ${message.from}.`);
-                        return;
-                    }
-                    await client.sendMessage(message.from, 'Para que a pessoa responsável pelo seu caso possa atendê-lo, por gentileza informe seu CPF ou CNPJ.');
-                    if (state.invalidCpfAttempts === MAX_WRONG_ANSWERS) {
-                        state.blocked = true;
-                        console.log(`[${accountId}] 🛑 Max CPF attempts reached for ${message.from}. Blocking further replies.`);
-                    }
-                } else {
-                    await client.sendMessage(message.from, 'Estamos aguardando seu e-mail para continuar.');
-                }
-            } else if (state.step === 'email') {
-                if (!state.email) {
-                    state.email = text;
-                    state.step = 'done';
-                    const phoneNumber = await resolvePhoneNumber(client, message.from);
-                    if (!phoneNumber) {
-                        throw new Error(`Unable to resolve phone number for ${message.from}`);
-                    }
-                    console.log(`[${accountId}] 📌 Lead captured from ${message.from}: CPF=${state.cpf} Email=${state.email}`);
-                    await appendLeadToSheet(phoneNumber, state.cpf, state.email);
-                    await client.sendMessage(message.from, 'Obrigado! Um especialista entrará em contato em breve.');
-                } else {
-                    await client.sendMessage(message.from, 'Já recebemos seus dados. Em breve entraremos em contato.');
-                }
-            } else {
-                state.postCompletionReplies += 1;
-                if (state.postCompletionReplies > MAX_WRONG_ANSWERS) {
-                    state.blocked = true;
-                    console.log(`[${accountId}] 🛑 Max post-completion replies reached for ${message.from}. Blocking further replies.`);
-                    return;
-                }
-                await client.sendMessage(message.from, 'Já recebemos seus dados. Em breve entraremos em contato.');
-                if (state.postCompletionReplies === MAX_WRONG_ANSWERS) {
-                    state.blocked = true;
-                    console.log(`[${accountId}] 🛑 Max post-completion replies reached for ${message.from}. Blocking further replies.`);
-                }
-            }
-            console.log(`[${accountId}] ✅ Auto-replied to ${message.from}`);
-        } catch (error) {
-            console.error(`[${accountId}] ❌ Error replying to ${message.from}:`, error.message);
+    function getLeadState(chatId) {
+        if (!leadCapture.has(chatId)) {
+            leadCapture.set(chatId, { step: 'cpf', cpf: null, email: null, invalidCpfAttempts: 0, postCompletionReplies: 0, blocked: false });
         }
+        return leadCapture.get(chatId);
     }
-});
 
-// Event: Loading screen
-client.on('loading_screen', (percent, message) => {
-    console.log(`[${accountId}] Loading... ${percent}%`);
-});
+    function extractDocumentNumber(value) {
+        if (!value) return null;
+        const digits = value.replace(/\D/g, '');
+        if (digits.length === 11 || digits.length === 14) return digits;
+        return null;
+    }
 
-// Initialize the client
+    client.on('message_create', async (message) => {
+        if (!message.fromMe && message.body) {
+            try {
+                const replyDelayMs = randomBetween(1000, 3000);
+                await new Promise(resolve => setTimeout(resolve, replyDelayMs));
+                const state = getLeadState(message.from);
+                const text = message.body.trim();
+
+                if (state.blocked) return;
+
+                if (state.step === 'cpf') {
+                    const docNum = extractDocumentNumber(text);
+                    if (!state.cpf && docNum) {
+                        state.cpf = docNum;
+                        state.step = 'email';
+                        await client.sendMessage(message.from, 'Obrigado! Agora informe seu e-mail, por gentiliza:');
+                    } else if (!state.cpf) {
+                        state.invalidCpfAttempts += 1;
+                        if (state.invalidCpfAttempts > MAX_WRONG_ANSWERS) { state.blocked = true; return; }
+                        await client.sendMessage(message.from, 'Por gentileza informe seu CPF ou CNPJ.');
+                    } else {
+                        await client.sendMessage(message.from, 'Estamos aguardando seu e-mail.');
+                    }
+                } else if (state.step === 'email') {
+                    if (!state.email) {
+                        state.email = text;
+                        state.step = 'done';
+                        const phoneNumber = await resolvePhoneNumber(client, message.from);
+                        await appendLeadToSheet(phoneNumber, state.cpf, state.email);
+                        await client.sendMessage(message.from, 'Obrigado! Um especialista entrará em contato em breve.');
+                    } else {
+                        await client.sendMessage(message.from, 'Já recebemos seus dados.');
+                    }
+                } else {
+                    state.postCompletionReplies += 1;
+                    if (state.postCompletionReplies > MAX_WRONG_ANSWERS) { state.blocked = true; return; }
+                    await client.sendMessage(message.from, 'Já recebemos seus dados.');
+                }
+            } catch (error) {
+                console.error(`[${accountId}] ❌ Error replying:`, error.message);
+            }
+        }
+    });
+}
+
 console.log(`[${accountId}] 🚀 Starting WhatsApp client...\n`);
 client.initialize();
 
-// Handle process termination
+if (isOneShotMode) {
+    setTimeout(() => { console.error(`[${accountId}] ⏱️  Timeout (60s)`); process.exit(1); }, 60000);
+}
+
 process.on('SIGINT', async () => {
     console.log(`\n[${accountId}] Shutting down...`);
     await client.destroy();
